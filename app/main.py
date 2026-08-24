@@ -4,6 +4,7 @@ import httpx
 from fastapi import FastAPI
 
 from app.api.routes import router
+from app.connectors.canvas import CanvasClient
 from app.connectors.gmail.client import GmailClient
 from app.connectors.gmail.oauth import (
     GmailCredentialStore,
@@ -14,6 +15,7 @@ from app.connectors.gmail.service import GmailService
 from app.connectors.moodle import MoodleClient
 from app.core.config import get_settings
 from app.jobs.gmail_sync import GmailSyncJob, JsonGmailSyncStateStore
+from app.routes.canvas import router as canvas_router
 from app.routes.gmail import router as gmail_router
 from app.workers.email_processor import EmailProcessor
 
@@ -32,12 +34,26 @@ async def lifespan(app: FastAPI):
         follow_redirects=False,
         trust_env=settings.http_trust_env,
     )
+    canvas_http_client = httpx.AsyncClient(
+        timeout=httpx.Timeout(settings.canvas_request_timeout_seconds),
+        follow_redirects=False,
+        trust_env=settings.http_trust_env,
+    )
     app.state.moodle_client = MoodleClient(
         http_client=http_client,
         base_url=settings.mytimes_base_url,
         token=settings.mytimes_token.get_secret_value()
         if settings.mytimes_token
         else None,
+    )
+    app.state.canvas_client = CanvasClient(
+        http_client=canvas_http_client,
+        base_url=settings.canvas_base_url,
+        access_key=(
+            settings.canvas_access_key.get_secret_value()
+            if settings.canvas_access_key
+            else None
+        ),
     )
     gmail_credential_store = GmailCredentialStore(
         configured_refresh_token=(
@@ -86,6 +102,7 @@ async def lifespan(app: FastAPI):
     finally:
         await http_client.aclose()
         await gmail_http_client.aclose()
+        await canvas_http_client.aclose()
 
 
 settings = get_settings()
@@ -95,4 +112,5 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(router)
+app.include_router(canvas_router)
 app.include_router(gmail_router)

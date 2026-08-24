@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     moodle_request_timeout_seconds: float = 30.0
     http_trust_env: bool = False
 
+    # Canvas is intentionally exposed through GET-only application routes.
+    canvas_base_url: str = "https://canvas.nus.edu.sg"
+    canvas_access_key: SecretStr | None = None
+    canvas_request_timeout_seconds: float = Field(default=30.0, gt=0)
+
     # Google OAuth credentials for a Web application. Gmail access is read-only.
     gmail_client_id: SecretStr | None = None
     gmail_client_secret: SecretStr | None = None
