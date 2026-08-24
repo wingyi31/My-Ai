@@ -4,4 +4,5 @@ __pycache__/
 *.pyc
 .pytest_cache/
 data/*.db
+data/gmail_*.json
 .DS_Store
