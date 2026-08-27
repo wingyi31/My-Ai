@@ -3,6 +3,30 @@
 FastAPI ingestion service for MyTIMeS, read-only Canvas course access, and
 read-only Gmail synchronization.
 
+## Project structure
+
+```text
+.
+├── app/
+│   ├── connectors/   # Canvas, Gmail, and MyTIMeS API clients
+│   ├── core/         # Application configuration
+│   ├── jobs/         # Stateful synchronization jobs
+│   ├── models/       # Shared domain and validation models
+│   ├── repositories/ # Persistence interfaces and implementations
+│   ├── routes/       # FastAPI endpoints and route dependencies
+│   ├── services/     # Application use cases and response shaping
+│   ├── workers/      # Reusable processing components
+│   └── main.py       # FastAPI assembly and lifespan wiring
+├── data/             # Ignored local credentials and sync state
+├── scripts/          # Manual integration and maintenance scripts
+├── tests/            # Automated tests and fixtures
+└── main.py           # Cloud Run/uvicorn entry point
+```
+
+Keep provider-specific HTTP behavior in `connectors`, business workflows in
+`services` or `jobs`, and transport concerns in `routes`. Runtime data belongs
+in `data/`; it should not be imported by application modules.
+
 ## Canvas setup (read-only)
 
 1. Set `CANVAS_BASE_URL` and `CANVAS_ACCESS_KEY` in `.env`. The checked-in

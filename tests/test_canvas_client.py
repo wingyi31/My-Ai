@@ -7,8 +7,47 @@ from app.connectors.canvas import (
     CanvasApiError,
     CanvasClient,
     CanvasNotConfiguredError,
+    CanvasReadOnlyViolation,
 )
 
+def test_canvas_client_blocks_non_get_before_transport() -> None:
+    async def run() -> None:
+        transport_reached = False
+
+        def handler(
+            request: httpx.Request,
+        ) -> httpx.Response:
+            nonlocal transport_reached
+            transport_reached = True
+
+            return httpx.Response(
+                200,
+                json={},
+            )
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                handler
+            )
+        ) as http_client:
+            CanvasClient(
+                http_client,
+                "https://canvas.example.edu",
+                "secret",
+            )
+
+            with pytest.raises(
+                CanvasReadOnlyViolation,
+                match="Blocked non-GET request",
+            ):
+                await http_client.post(
+                    "https://canvas.example.edu"
+                    "/api/v1/courses"
+                )
+
+        assert transport_reached is False
+
+    asyncio.run(run())
 
 def test_canvas_client_uses_get_and_follows_safe_pagination() -> None:
     async def run() -> None:
@@ -71,7 +110,7 @@ def test_canvas_client_rejects_cross_origin_pagination() -> None:
     asyncio.run(run())
 
 
-def test_canvas_client_explains_missing_access_key() -> None:
+def test_canvas_client_explains_missing_access_token() -> None:
     async def run() -> None:
         async with httpx.AsyncClient() as http_client:
             client = CanvasClient(
@@ -81,7 +120,7 @@ def test_canvas_client_explains_missing_access_key() -> None:
             )
             with pytest.raises(
                 CanvasNotConfiguredError,
-                match="CANVAS_ACCESS_KEY is missing",
+                match="CANVAS_ACCESS_TOKEN is missing",
             ):
                 await client.get_current_user()
 

@@ -15,7 +15,22 @@ from urllib.parse import urlencode
 
 import httpx
 
-GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+GMAIL_READONLY_SCOPE = (
+    "https://www.googleapis.com/auth/"
+    "gmail.readonly"
+)
+
+CALENDAR_EVENTS_SCOPE = (
+    "https://www.googleapis.com/auth/"
+    "calendar.events"
+)
+
+GOOGLE_OAUTH_SCOPES = " ".join(
+    [
+        GMAIL_READONLY_SCOPE,
+        CALENDAR_EVENTS_SCOPE,
+    ]
+)
 GOOGLE_AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 
@@ -189,7 +204,7 @@ class GmailOAuthClient:
                 "client_id": self._client_id,
                 "redirect_uri": self._redirect_uri,
                 "response_type": "code",
-                "scope": GMAIL_READONLY_SCOPE,
+                "scope": GOOGLE_OAUTH_SCOPES,
                 "access_type": "offline",
                 "include_granted_scopes": "true",
                 "prompt": "consent",

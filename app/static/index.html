@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
+  >
+  <meta
+    name="description"
+    content="StudyOps academic agent"
+  >
+  <title>StudyOps</title>
+  <link
+    rel="stylesheet"
+    href="/static/styles.css"
+  >
+</head>
+
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">S</div>
+
+        <div>
+          <h1>StudyOps</h1>
+          <p>Academic copilot</p>
+        </div>
+      </div>
+
+      <section class="sidebar-section">
+        <p class="section-label">
+          Current scope
+        </p>
+
+        <label for="user-id">
+          Canvas user ID
+        </label>
+        <input
+          id="user-id"
+          value="126345"
+          autocomplete="off"
+        >
+
+        <label for="course-id">
+          Course ID
+        </label>
+        <input
+          id="course-id"
+          value="96996"
+          autocomplete="off"
+        >
+      </section>
+
+      <section class="sidebar-section">
+        <p class="section-label">
+          Try asking
+        </p>
+
+        <button
+          class="quick-prompt"
+          type="button"
+          data-prompt="What assignments or quizzes are due next?"
+        >
+          Upcoming deadlines
+        </button>
+
+        <button
+          class="quick-prompt"
+          type="button"
+          data-prompt="What sorting algorithms are discussed in the course material?"
+        >
+          Course concepts
+        </button>
+
+        <button
+          class="quick-prompt"
+          type="button"
+          data-prompt="What file type can I submit for Lab 1, and when does it lock?"
+        >
+          Assignment details
+        </button>
+
+        <button
+          class="quick-prompt"
+          type="button"
+          data-prompt="Prepare adding the Lab 1 lock time to my calendar. Do not create it until I confirm."
+        >
+          Prepare Calendar event
+        </button>
+      </section>
+
+      <div class="security-note">
+        <span class="status-dot"></span>
+
+        <div>
+          <strong>Confirmation protected</strong>
+          <p>
+            Calendar writes require explicit
+            approval.
+          </p>
+        </div>
+      </div>
+    </aside>
+
+    <main class="chat-panel">
+      <header class="chat-header">
+        <div>
+          <p class="eyebrow">
+            CS3223 · Database Systems
+          </p>
+          <h2>Study workspace</h2>
+        </div>
+
+        <div class="header-status">
+          <span class="status-dot"></span>
+          Connected
+        </div>
+      </header>
+
+      <section
+        id="messages"
+        class="messages"
+        aria-live="polite"
+      >
+        <article class="message assistant-message">
+          <div class="avatar">S</div>
+
+          <div class="message-body">
+            <div class="message-label">
+              StudyOps
+            </div>
+
+            <div class="message-content">
+              <p>
+                Hello! I can search your course
+                materials, check Canvas deadlines,
+                explain assignments, and prepare
+                Calendar events for your approval.
+              </p>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <form id="chat-form" class="composer">
+        <textarea
+          id="message-input"
+          rows="1"
+          maxlength="8000"
+          placeholder="Ask about your course…"
+          required
+        ></textarea>
+
+        <button
+          id="send-button"
+          class="send-button"
+          type="submit"
+          aria-label="Send message"
+        >
+          <span>Send</span>
+          <span aria-hidden="true">↑</span>
+        </button>
+      </form>
+
+      <p class="composer-hint">
+        StudyOps can make mistakes. Review every
+        Calendar action before confirming.
+      </p>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

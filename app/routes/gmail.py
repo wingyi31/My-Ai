@@ -5,7 +5,6 @@ from typing import Annotated
 from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 
-from app.api.routes import verify_scheduler_secret
 from app.connectors.gmail.client import GmailApiError
 from app.connectors.gmail.oauth import (
     GmailNotConfiguredError,
@@ -14,6 +13,7 @@ from app.connectors.gmail.oauth import (
 )
 from app.connectors.gmail.service import GmailMessageProcessingError
 from app.jobs.gmail_sync import GmailSyncStateError
+from app.routes.dependencies import verify_scheduler_secret
 
 router = APIRouter(tags=["gmail"])
 
