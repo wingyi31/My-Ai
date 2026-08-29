@@ -35,6 +35,19 @@ class Settings(BaseSettings):
         le=7200,
     )
 
+    # Notion
+    notion_base_url: str = (
+        "https://api.notion.com/v1"
+    )
+    notion_api_key: SecretStr | None = None
+    notion_parent_page_id: str | None = None
+    notion_api_version: str = (
+        "2026-03-11"
+    )
+    notion_request_timeout_seconds: float = (
+        Field(default=30.0, gt=0)
+    )
+
     # Google Cloud, Firestore and RAG settings.
     google_cloud_project: str = Field(
         min_length=1,

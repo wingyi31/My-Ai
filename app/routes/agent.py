@@ -34,6 +34,8 @@ from app.models.agent import (
     ConversationSummaryResponse,
     SummaryPreferencesResponse,
     SummaryPreferencesUpdateRequest,
+    TopicSummaryPrepareRequest,
+    TopicSummaryResponse,
 )
 from app.models.rag import RagSourceResponse
 from app.repositories.pending_action_repository import (
@@ -58,6 +60,9 @@ from app.services.academic_agent_service import (
 )
 from app.services.calendar_action_service import (
     CalendarActionService,
+)
+from app.services.rag_answer_service import (
+    RagAnswerService,
 )
 
 
@@ -234,6 +239,27 @@ def pending_action_response(
             action.calendar_event_link
         ),
     )
+
+def get_rag_answer_service(
+    request: Request,
+) -> RagAnswerService:
+    service = getattr(
+        request.app.state,
+        "rag_answer_service",
+        None,
+    )
+
+    if service is None:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_503_SERVICE_UNAVAILABLE
+            ),
+            detail=(
+                "RAG answer service is not ready"
+            ),
+        )
+
+    return service
 
 @router.get(
     "/conversations",
@@ -442,6 +468,190 @@ async def update_summary_preferences(
 
     return summary_preferences_response(
         preferences
+    )
+
+@router.post(
+    "/summaries/prepare",
+    response_model=TopicSummaryResponse,
+    status_code=(
+        status.HTTP_201_CREATED
+    ),
+)
+async def prepare_topic_summary(
+    payload: TopicSummaryPrepareRequest,
+    request: Request,
+) -> TopicSummaryResponse:
+    rag_service = get_rag_answer_service(
+        request
+    )
+    preference_repository = (
+        get_summary_preference_repository(
+            request
+        )
+    )
+    episodic_repository = (
+        get_episodic_memory_repository(
+            request
+        )
+    )
+
+    try:
+        preferences = await (
+            preference_repository
+            .get_summary_preferences(
+                user_id=payload.user_id
+            )
+        )
+
+        result = await (
+            rag_service.generate_topic_summary(
+                user_id=payload.user_id,
+                course_id=payload.course_id,
+                topic=payload.topic,
+                detail_level=(
+                    preferences.detail_level
+                ),
+                section_order=(
+                    preferences.section_order
+                ),
+                preferred_language=(
+                    preferences
+                    .preferred_language
+                ),
+                include_flashcards=(
+                    preferences
+                    .include_flashcards
+                ),
+                include_source_links=(
+                    preferences
+                    .include_source_links
+                ),
+                source_limit=(
+                    payload.source_limit
+                ),
+            )
+        )
+
+        source_payload = [
+            {
+                "source_number": source_number,
+                "chunk_id": source.chunk_id,
+                "document_path": (
+                    source.document_path
+                ),
+                "canvas_file_id": (
+                    source.canvas_file_id
+                ),
+                "filename": source.filename,
+                "page_number": (
+                    source.page_number
+                ),
+                "chunk_index": (
+                    source.chunk_index
+                ),
+                "similarity": (
+                    source.similarity
+                ),
+                "distance": source.distance,
+            }
+            for source_number, source
+            in enumerate(
+                result.sources,
+                start=1,
+            )
+        ]
+
+        event = await (
+            episodic_repository.record_event(
+                user_id=payload.user_id,
+                course_id=payload.course_id,
+                session_id=(
+                    payload.session_id
+                ),
+                event_type="summary.generated",
+                entity_type="topic",
+                payload={
+                    "topic": payload.topic.strip(),
+                    "summary": result.answer,
+                    "generation_model": (
+                        result.generation_model
+                    ),
+                    "preference_version": (
+                        preferences.version
+                    ),
+                    "preferences_confirmed": (
+                        preferences.confirmed
+                    ),
+                    "section_order": list(
+                        preferences.section_order
+                    ),
+                    "sources": source_payload,
+                },
+            )
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_400_BAD_REQUEST
+            ),
+            detail=str(error),
+        ) from error
+    except SummaryPreferenceError as error:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+            ),
+            detail=str(error),
+        ) from error
+    except RuntimeError as error:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_502_BAD_GATEWAY
+            ),
+            detail=str(error),
+        ) from error
+
+    sources = [
+        RagSourceResponse(
+            source_number=source_number,
+            chunk_id=source.chunk_id,
+            document_path=(
+                source.document_path
+            ),
+            canvas_file_id=(
+                source.canvas_file_id
+            ),
+            filename=source.filename,
+            page_number=source.page_number,
+            chunk_index=source.chunk_index,
+            similarity=source.similarity,
+            distance=source.distance,
+        )
+        for source_number, source
+        in enumerate(
+            result.sources,
+            start=1,
+        )
+    ]
+
+    return TopicSummaryResponse(
+        summary_id=event.event_id,
+        topic=payload.topic.strip(),
+        summary=result.answer,
+        generation_model=(
+            result.generation_model
+        ),
+        preference_version=(
+            preferences.version
+        ),
+        preferences_confirmed=(
+            preferences.confirmed
+        ),
+        section_order=list(
+            preferences.section_order
+        ),
+        sources=sources,
+        created_at=event.occurred_at,
     )
 
 @router.post(

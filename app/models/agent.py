@@ -178,6 +178,44 @@ class SummaryPreferencesResponse(
     confirmed: bool
     updated_at: datetime | None
 
+class TopicSummaryPrepareRequest(
+    BaseModel
+):
+    user_id: str = Field(
+        min_length=1,
+        max_length=200,
+    )
+    course_id: str = Field(
+        min_length=1,
+        max_length=200,
+    )
+    session_id: str = Field(
+        min_length=1,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+    topic: str = Field(
+        min_length=1,
+        max_length=500,
+    )
+    source_limit: int = Field(
+        default=10,
+        ge=1,
+        le=20,
+    )
+
+
+class TopicSummaryResponse(BaseModel):
+    summary_id: str
+    topic: str
+    summary: str
+    generation_model: str
+    preference_version: int
+    preferences_confirmed: bool
+    section_order: list[str]
+    sources: list[RagSourceResponse]
+    created_at: datetime
+
 
 class CalendarActionConfirmationResponse(
     BaseModel
