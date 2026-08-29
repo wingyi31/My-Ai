@@ -7,6 +7,10 @@ from app.repositories.episodic_memory_repository import (
 from app.repositories.firestore_client import (
     get_firestore_client,
 )
+from app.repositories.episodic_memory_repository import (
+    EpisodicEventNotFoundError,
+    EpisodicMemoryRepository,
+)
 
 
 TEST_COURSE_ID = "course-123"
@@ -51,6 +55,35 @@ async def main() -> None:
                 },
             )
         )
+
+        loaded = await repository.get_event(
+            user_id=user_id,
+            course_id=TEST_COURSE_ID,
+            event_id=generated.event_id,
+        )
+
+        assert loaded.event_id == (
+            generated.event_id
+        )
+        assert loaded.event_type == (
+            "summary.generated"
+        )
+        assert loaded.payload["title"] == (
+            "Virtual Memory"
+        )
+
+        try:
+            await repository.get_event(
+                user_id=user_id,
+                course_id="different-course",
+                event_id=generated.event_id,
+            )
+        except EpisodicEventNotFoundError:
+            course_mismatch_blocked = True
+        else:
+            course_mismatch_blocked = False
+
+        assert course_mismatch_blocked
 
         prepared = await (
             repository.record_event(
@@ -111,6 +144,9 @@ async def main() -> None:
                 ],
                 "invalid_type_blocked": (
                     invalid_type_blocked
+                ),
+                "course_mismatch_blocked": (
+                    course_mismatch_blocked
                 ),
             }
         )

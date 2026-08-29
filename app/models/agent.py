@@ -216,6 +216,63 @@ class TopicSummaryResponse(BaseModel):
     sources: list[RagSourceResponse]
     created_at: datetime
 
+class NotionPublishPrepareRequest(
+    BaseModel
+):
+    user_id: str = Field(
+        min_length=1,
+        max_length=200,
+    )
+    course_id: str = Field(
+        min_length=1,
+        max_length=200,
+    )
+    session_id: str = Field(
+        min_length=1,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+    summary_id: str = Field(
+        min_length=1,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+
+
+class PendingNotionActionResponse(
+    BaseModel
+):
+    action_id: str
+    user_id: str
+    course_id: str
+    session_id: str
+    action_type: str
+    summary_id: str
+    title: str
+    status: str
+    created_at: datetime
+    expires_at: datetime
+    completed_at: datetime | None
+    notion_page_id: str | None
+    notion_page_url: str | None
+    failed_attempts: int
+    last_error: str | None
+
+
+class NotionPublishConfirmationResponse(
+    BaseModel
+):
+    status: str
+    already_completed: bool
+    action: PendingNotionActionResponse
+
+
+class NotionPublishCancelResponse(
+    BaseModel
+):
+    status: str
+    action_id: str
+
 
 class CalendarActionConfirmationResponse(
     BaseModel

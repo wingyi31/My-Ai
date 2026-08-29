@@ -20,6 +20,11 @@ from app.connectors.gmail.oauth import (
     GmailNotConfiguredError,
     GmailOAuthError,
 )
+from app.connectors.notion.client import (
+    NotionApiError,
+    NotionClient,
+    NotionNotConfiguredError,
+)
 from app.models.agent import (
     ActionUserRequest,
     AgentChatRequest,
@@ -36,6 +41,10 @@ from app.models.agent import (
     SummaryPreferencesUpdateRequest,
     TopicSummaryPrepareRequest,
     TopicSummaryResponse,
+    NotionPublishCancelResponse,
+    NotionPublishConfirmationResponse,
+    NotionPublishPrepareRequest,
+    PendingNotionActionResponse,
 )
 from app.models.rag import RagSourceResponse
 from app.repositories.pending_action_repository import (
@@ -43,6 +52,16 @@ from app.repositories.pending_action_repository import (
     PendingActionNotFoundError,
     PendingActionStateError,
     PendingCalendarAction,
+)
+from app.repositories.pending_notion_action_repository import (
+    CANCELLED_STATUS as NOTION_CANCELLED_STATUS,
+    COMPLETED_STATUS as NOTION_COMPLETED_STATUS,
+    PendingNotionAction,
+    PendingNotionActionError,
+    PendingNotionActionExpiredError,
+    PendingNotionActionNotFoundError,
+    PendingNotionActionRepository,
+    PendingNotionActionStateError,
 )
 from app.repositories.conversation_repository import (
     ConversationRepository,
@@ -54,6 +73,15 @@ from app.repositories.summary_preference_repository import (
     SummaryPreferenceError,
     SummaryPreferenceRepository,
     SummaryPreferences,
+)
+from app.repositories.episodic_memory_repository import (
+    EpisodicEventNotFoundError,
+    EpisodicMemoryRepository,
+)
+from app.repositories.pending_notion_action_repository import (
+    PendingNotionAction,
+    PendingNotionActionError,
+    PendingNotionActionRepository,
 )
 from app.services.academic_agent_service import (
     AcademicAgentService,
@@ -126,6 +154,28 @@ def get_agent_service(
 
     return service
 
+def get_pending_notion_action_repository(
+    request: Request,
+) -> PendingNotionActionRepository:
+    repository = getattr(
+        request.app.state,
+        "pending_notion_action_repository",
+        None,
+    )
+
+    if repository is None:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_503_SERVICE_UNAVAILABLE
+            ),
+            detail=(
+                "Pending Notion action repository "
+                "is not ready"
+            ),
+        )
+
+    return repository
+
 def get_conversation_repository(
     request: Request,
 ) -> ConversationRepository:
@@ -169,6 +219,25 @@ def get_episodic_memory_repository(
         )
 
     return repository
+
+def get_notion_client(
+    request: Request,
+) -> NotionClient:
+    client = getattr(
+        request.app.state,
+        "notion_client",
+        None,
+    )
+
+    if client is None:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_503_SERVICE_UNAVAILABLE
+            ),
+            detail="Notion client is not ready",
+        )
+
+    return client
 
 
 def get_summary_preference_repository(
@@ -238,6 +307,33 @@ def pending_action_response(
         calendar_event_link=(
             action.calendar_event_link
         ),
+    )
+
+def pending_notion_action_response(
+    action: PendingNotionAction,
+) -> PendingNotionActionResponse:
+    return PendingNotionActionResponse(
+        action_id=action.action_id,
+        user_id=action.user_id,
+        course_id=action.course_id,
+        session_id=action.session_id,
+        action_type=action.action_type,
+        summary_id=action.summary_id,
+        title=action.title,
+        status=action.status,
+        created_at=action.created_at,
+        expires_at=action.expires_at,
+        completed_at=action.completed_at,
+        notion_page_id=(
+            action.notion_page_id
+        ),
+        notion_page_url=(
+            action.notion_page_url
+        ),
+        failed_attempts=(
+            action.failed_attempts
+        ),
+        last_error=action.last_error,
     )
 
 def get_rag_answer_service(
@@ -652,6 +748,477 @@ async def prepare_topic_summary(
         ),
         sources=sources,
         created_at=event.occurred_at,
+    )
+
+@router.post(
+    "/actions/notion/prepare",
+    response_model=(
+        PendingNotionActionResponse
+    ),
+    status_code=(
+        status.HTTP_201_CREATED
+    ),
+)
+async def prepare_notion_publish(
+    payload: NotionPublishPrepareRequest,
+    request: Request,
+) -> PendingNotionActionResponse:
+    episodic_repository = (
+        get_episodic_memory_repository(
+            request
+        )
+    )
+    action_repository = (
+        get_pending_notion_action_repository(
+            request
+        )
+    )
+
+    try:
+        summary_event = await (
+            episodic_repository.get_event(
+                user_id=payload.user_id,
+                course_id=payload.course_id,
+                event_id=payload.summary_id,
+            )
+        )
+
+        if (
+            summary_event.event_type
+            != "summary.generated"
+        ):
+            raise ValueError(
+                "The selected event is not a "
+                "generated summary"
+            )
+
+        if (
+            summary_event.session_id
+            != payload.session_id
+        ):
+            raise ValueError(
+                "Summary belongs to a different "
+                "conversation"
+            )
+
+        topic = summary_event.payload.get(
+            "topic"
+        )
+        summary = summary_event.payload.get(
+            "summary"
+        )
+
+        if (
+            not isinstance(topic, str)
+            or not topic.strip()
+            or not isinstance(summary, str)
+            or not summary.strip()
+        ):
+            raise ValueError(
+                "Stored summary contains invalid "
+                "content"
+            )
+
+        title = (
+            f"{topic.strip()} — "
+            "StudyOps Summary"
+        )[:200]
+
+        action = await (
+            action_repository
+            .create_publish_action(
+                user_id=payload.user_id,
+                course_id=payload.course_id,
+                session_id=(
+                    payload.session_id
+                ),
+                summary_id=(
+                    payload.summary_id
+                ),
+                title=title,
+            )
+        )
+
+        await episodic_repository.record_event(
+            user_id=payload.user_id,
+            course_id=payload.course_id,
+            session_id=payload.session_id,
+            event_type=(
+                "notion.publish_prepared"
+            ),
+            entity_type="summary",
+            entity_id=payload.summary_id,
+            payload={
+                "action_id": action.action_id,
+                "summary_id": (
+                    action.summary_id
+                ),
+                "title": action.title,
+                "expires_at": (
+                    action.expires_at
+                ),
+            },
+        )
+    except EpisodicEventNotFoundError as error:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_404_NOT_FOUND
+            ),
+            detail=str(error),
+        ) from error
+    except ValueError as error:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_400_BAD_REQUEST
+            ),
+            detail=str(error),
+        ) from error
+    except PendingNotionActionError as error:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+            ),
+            detail=str(error),
+        ) from error
+
+    return pending_notion_action_response(
+        action
+    )
+
+@router.post(
+    "/actions/notion/{action_id}/confirm",
+    response_model=(
+        NotionPublishConfirmationResponse
+    ),
+)
+async def confirm_notion_publish(
+    action_id: ActionId,
+    payload: ActionUserRequest,
+    request: Request,
+) -> NotionPublishConfirmationResponse:
+    action_repository = (
+        get_pending_notion_action_repository(
+            request
+        )
+    )
+    episodic_repository = (
+        get_episodic_memory_repository(
+            request
+        )
+    )
+    notion_client = get_notion_client(
+        request
+    )
+
+    try:
+        current_action = await (
+            action_repository.get_action(
+                user_id=payload.user_id,
+                action_id=action_id,
+            )
+        )
+
+        if (
+            current_action.status
+            == NOTION_COMPLETED_STATUS
+        ):
+            return (
+                NotionPublishConfirmationResponse(
+                    status="completed",
+                    already_completed=True,
+                    action=(
+                        pending_notion_action_response(
+                            current_action
+                        )
+                    ),
+                )
+            )
+
+        action = await (
+            action_repository
+            .get_confirmable_action(
+                user_id=payload.user_id,
+                action_id=action_id,
+            )
+        )
+
+        summary_event = await (
+            episodic_repository.get_event(
+                user_id=action.user_id,
+                course_id=action.course_id,
+                event_id=action.summary_id,
+            )
+        )
+
+        if (
+            summary_event.event_type
+            != "summary.generated"
+        ):
+            raise ValueError(
+                "The action does not reference a "
+                "generated summary"
+            )
+
+        if (
+            summary_event.session_id
+            != action.session_id
+        ):
+            raise ValueError(
+                "Summary belongs to a different "
+                "conversation"
+            )
+
+        summary = summary_event.payload.get(
+            "summary"
+        )
+
+        if (
+            not isinstance(summary, str)
+            or not summary.strip()
+        ):
+            raise ValueError(
+                "Stored summary contains invalid "
+                "content"
+            )
+
+    except PendingNotionActionNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except EpisodicEventNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except PendingNotionActionExpiredError as error:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail=str(error),
+        ) from error
+    except PendingNotionActionStateError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
+    except PendingNotionActionError as error:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+            ),
+            detail=str(error),
+        ) from error
+
+    try:
+        page = await (
+            notion_client.create_markdown_page(
+                title=action.title,
+                markdown=summary,
+            )
+        )
+    except (
+        NotionNotConfiguredError,
+        NotionApiError,
+    ) as error:
+        # Keep the action pending so a temporary
+        # Notion failure can be retried.
+        try:
+            await action_repository.record_failure(
+                user_id=action.user_id,
+                action_id=action.action_id,
+                error_message=str(error),
+            )
+
+            await episodic_repository.record_event(
+                user_id=action.user_id,
+                course_id=action.course_id,
+                session_id=action.session_id,
+                event_type=(
+                    "notion.publish_failed"
+                ),
+                entity_type="summary",
+                entity_id=action.summary_id,
+                payload={
+                    "action_id": (
+                        action.action_id
+                    ),
+                    "summary_id": (
+                        action.summary_id
+                    ),
+                    "error": str(error)[:500],
+                },
+            )
+        except RuntimeError:
+            # Preserve the original Notion error.
+            pass
+
+        response_status = (
+            status.HTTP_503_SERVICE_UNAVAILABLE
+            if isinstance(
+                error,
+                NotionNotConfiguredError,
+            )
+            else status.HTTP_502_BAD_GATEWAY
+        )
+
+        raise HTTPException(
+            status_code=response_status,
+            detail=str(error),
+        ) from error
+
+    try:
+        await action_repository.mark_completed(
+            user_id=action.user_id,
+            action_id=action.action_id,
+            notion_page_id=page.page_id,
+            notion_page_url=page.url,
+        )
+
+        completed_action = await (
+            action_repository.get_action(
+                user_id=action.user_id,
+                action_id=action.action_id,
+            )
+        )
+    except PendingNotionActionError as error:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+            ),
+            detail=(
+                "The Notion page was created, but "
+                "StudyOps could not save its final "
+                f"action state. Page: {page.url}"
+            ),
+        ) from error
+
+    try:
+        await episodic_repository.record_event(
+            user_id=action.user_id,
+            course_id=action.course_id,
+            session_id=action.session_id,
+            event_type=(
+                "notion.publish_completed"
+            ),
+            entity_type="summary",
+            entity_id=action.summary_id,
+            payload={
+                "action_id": action.action_id,
+                "summary_id": (
+                    action.summary_id
+                ),
+                "notion_page_id": (
+                    page.page_id
+                ),
+                "notion_page_url": page.url,
+                "title": page.title,
+            },
+        )
+    except RuntimeError:
+        # The page and action state are already
+        # complete. Do not encourage a duplicate
+        # publish because event logging failed.
+        pass
+
+    return NotionPublishConfirmationResponse(
+        status="completed",
+        already_completed=False,
+        action=pending_notion_action_response(
+            completed_action
+        ),
+    )
+
+@router.post(
+    "/actions/notion/{action_id}/cancel",
+    response_model=(
+        NotionPublishCancelResponse
+    ),
+)
+async def cancel_notion_publish(
+    action_id: ActionId,
+    payload: ActionUserRequest,
+    request: Request,
+) -> NotionPublishCancelResponse:
+    action_repository = (
+        get_pending_notion_action_repository(
+            request
+        )
+    )
+    episodic_repository = (
+        get_episodic_memory_repository(
+            request
+        )
+    )
+
+    try:
+        action = await (
+            action_repository.get_action(
+                user_id=payload.user_id,
+                action_id=action_id,
+            )
+        )
+
+        if (
+            action.status
+            == NOTION_CANCELLED_STATUS
+        ):
+            return NotionPublishCancelResponse(
+                status="cancelled",
+                action_id=action.action_id,
+            )
+
+        await action_repository.cancel_action(
+            user_id=payload.user_id,
+            action_id=action_id,
+        )
+    except PendingNotionActionNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+    except PendingNotionActionStateError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+    except PendingNotionActionError as error:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+            ),
+            detail=str(error),
+        ) from error
+
+    try:
+        await episodic_repository.record_event(
+            user_id=action.user_id,
+            course_id=action.course_id,
+            session_id=action.session_id,
+            event_type=(
+                "notion.publish_cancelled"
+            ),
+            entity_type="summary",
+            entity_id=action.summary_id,
+            payload={
+                "action_id": action.action_id,
+                "summary_id": (
+                    action.summary_id
+                ),
+            },
+        )
+    except RuntimeError:
+        # The action is already cancelled, so an
+        # event-log failure must not reverse it.
+        pass
+
+    return NotionPublishCancelResponse(
+        status="cancelled",
+        action_id=action.action_id,
     )
 
 @router.post(

@@ -20,6 +20,9 @@ from app.connectors.gmail.oauth import (
 from app.connectors.gmail.service import (
     GmailService,
 )
+from app.connectors.notion.client import (
+    NotionClient,
+)
 from app.connectors.moodle import MoodleClient
 from app.core.config import get_settings
 from app.jobs.gmail_sync import (
@@ -37,6 +40,9 @@ from app.repositories.episodic_memory_repository import (
 )
 from app.repositories.summary_preference_repository import (
     SummaryPreferenceRepository,
+)
+from app.repositories.pending_notion_action_repository import (
+    PendingNotionActionRepository,
 )
 from app.routes.ui import (
     router as ui_router,
@@ -132,9 +138,17 @@ async def lifespan(app: FastAPI):
             settings
             .canvas_request_timeout_seconds
         ),
+    )
+
+    notion_http_client = httpx.AsyncClient(
+        timeout=httpx.Timeout(
+            settings
+            .notion_request_timeout_seconds
+        ),
         follow_redirects=False,
         trust_env=settings.http_trust_env,
     )
+
 
     app.state.moodle_client = MoodleClient(
         http_client=http_client,
@@ -277,6 +291,30 @@ async def lifespan(app: FastAPI):
         )
     )
 
+    pending_notion_action_repository = (
+        PendingNotionActionRepository(
+            firestore_client
+        )
+    )
+
+    notion_client = NotionClient(
+        http_client=notion_http_client,
+        api_key=(
+            settings.notion_api_key
+            .get_secret_value()
+            if settings.notion_api_key
+            is not None
+            else None
+        ),
+        api_version=(
+            settings.notion_api_version
+        ),
+        base_url=settings.notion_base_url,
+        parent_page_id=(
+            settings.notion_parent_page_id
+        ),
+    )
+
     calendar_action_service = (
         CalendarActionService(
             canvas_read_service=(
@@ -306,6 +344,10 @@ async def lifespan(app: FastAPI):
     app.state.summary_preference_repository = (
         summary_preference_repository
     )
+    app.state.pending_notion_action_repository = (
+        pending_notion_action_repository
+    )
+    app.state.notion_client = notion_client
 
     embedding_service = (
         VertexEmbeddingService(
@@ -428,6 +470,7 @@ async def lifespan(app: FastAPI):
         await http_client.aclose()
         await gmail_http_client.aclose()
         await canvas_http_client.aclose()
+        await notion_http_client.aclose()
         await (
             cloud_tasks_client
             .transport

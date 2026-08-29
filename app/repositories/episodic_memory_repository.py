@@ -15,6 +15,10 @@ EVENT_TYPE_PATTERN = re.compile(
     r"(?:\.[a-z][a-z0-9_]*)+$"
 )
 
+class EpisodicEventNotFoundError(
+    LookupError
+):
+    pass
 
 @dataclass(frozen=True)
 class EpisodicEvent:
@@ -82,6 +86,118 @@ class EpisodicMemoryRepository:
             .collection("users")
             .document(user_id)
             .collection("episodes")
+        )
+
+    async def get_event(
+        self,
+        *,
+        user_id: str,
+        course_id: str,
+        event_id: str,
+    ) -> EpisodicEvent:
+        cleaned_user_id = (
+            self._clean_identifier(
+                user_id,
+                label="User ID",
+            )
+        )
+        cleaned_course_id = (
+            self._clean_identifier(
+                course_id,
+                label="Course ID",
+            )
+        )
+        cleaned_event_id = (
+            self._clean_identifier(
+                event_id,
+                label="Event ID",
+            )
+        )
+
+        snapshot = await (
+            self._events_ref(
+                user_id=cleaned_user_id
+            )
+            .document(cleaned_event_id)
+            .get()
+        )
+
+        if not snapshot.exists:
+            raise EpisodicEventNotFoundError(
+                "Episodic event was not found"
+            )
+
+        data = snapshot.to_dict()
+
+        if not isinstance(data, dict):
+            raise EpisodicEventNotFoundError(
+                "Episodic event contains invalid "
+                "data"
+            )
+
+        stored_course_id = data.get(
+            "course_id"
+        )
+
+        if (
+            not isinstance(
+                stored_course_id,
+                str,
+            )
+            or stored_course_id
+            != cleaned_course_id
+        ):
+            # Return the same not-found error so one
+            # course cannot discover another course's
+            # events.
+            raise EpisodicEventNotFoundError(
+                "Episodic event was not found"
+            )
+
+        event_type = data.get("event_type")
+        occurred_at = data.get("occurred_at")
+        payload = data.get("payload")
+
+        if (
+            not isinstance(event_type, str)
+            or not event_type
+            or not isinstance(
+                occurred_at,
+                datetime,
+            )
+            or not isinstance(payload, dict)
+        ):
+            raise EpisodicEventNotFoundError(
+                "Episodic event contains invalid "
+                "data"
+            )
+
+        session_id = data.get("session_id")
+        entity_type = data.get("entity_type")
+        entity_id = data.get("entity_id")
+
+        return EpisodicEvent(
+            event_id=cleaned_event_id,
+            event_type=event_type,
+            user_id=cleaned_user_id,
+            course_id=cleaned_course_id,
+            session_id=(
+                session_id
+                if isinstance(session_id, str)
+                else None
+            ),
+            entity_type=(
+                entity_type
+                if isinstance(entity_type, str)
+                else None
+            ),
+            entity_id=(
+                entity_id
+                if isinstance(entity_id, str)
+                else None
+            ),
+            occurred_at=occurred_at,
+            payload=payload,
         )
 
     async def record_event(
