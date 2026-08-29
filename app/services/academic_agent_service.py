@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -7,11 +8,11 @@ from typing import Any
 from google import genai
 from google.genai import types
 
-from app.repositories.pending_action_repository import (
-    PendingCalendarAction,
-)
 from app.repositories.conversation_repository import (
     ConversationRepository,
+)
+from app.repositories.pending_action_repository import (
+    PendingCalendarAction,
 )
 from app.services.calendar_action_service import (
     CalendarActionService,
@@ -26,6 +27,9 @@ from app.services.rag_answer_service import (
 from app.services.semantic_search_service import (
     SemanticSearchResult,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 ANSWER_COURSE_QUESTION_TOOL = (
@@ -426,60 +430,144 @@ Rules:
             ],
         )
 
-        routing_response = (
-            await self._client.models
-            .generate_content(
-                model=self.generation_model,
-                contents=[
-                    *history_contents,
-                    user_content,
+        routing_contents = [
+            *history_contents,
+            user_content,
+        ]
+
+        routing_config = (
+            types.GenerateContentConfig(
+                system_instruction=(
+                    self.SYSTEM_INSTRUCTION
+                ),
+                temperature=0.0,
+                max_output_tokens=512,
+                tools=[
+                    self._academic_tools
                 ],
-                config=(
-                    types.GenerateContentConfig(
-                        system_instruction=(
-                            self
-                            .SYSTEM_INSTRUCTION
-                        ),
-                        temperature=0.0,
-                        max_output_tokens=512,
-                        tools=[
-                            self._academic_tools
-                        ],
-                        tool_config=(
-                            types.ToolConfig(
-                                function_calling_config=(
-                                    types
-                                    .FunctionCallingConfig(
-                                        mode="AUTO",
-                                    )
-                                )
-                            )
-                        ),
-                        automatic_function_calling=(
+                tool_config=(
+                    types.ToolConfig(
+                        function_calling_config=(
                             types
-                            .AutomaticFunctionCallingConfig(
-                                disable=True,
+                            .FunctionCallingConfig(
+                                mode="AUTO",
                             )
-                        ),
+                        )
+                    )
+                ),
+                automatic_function_calling=(
+                    types
+                    .AutomaticFunctionCallingConfig(
+                        disable=True,
                     )
                 ),
             )
         )
 
-        function_calls = (
+        routing_response = (
+            await self._client.models
+            .generate_content(
+                model=self.generation_model,
+                contents=routing_contents,
+                config=routing_config,
+            )
+        )
+
+        function_calls = list(
             routing_response.function_calls
             or []
         )
 
-        if not function_calls:
-            answer = (
+        routing_answer = (
+            ""
+            if function_calls
+            else (
                 routing_response.text or ""
             ).strip()
+        )
+
+        if (
+            not function_calls
+            and not routing_answer
+        ):
+            logger.warning(
+                "Gemini returned an empty routing "
+                "response; retrying once"
+            )
+
+            retry_instruction = (
+                self.SYSTEM_INSTRUCTION
+                + "\n\n"
+                + "The previous routing response "
+                "was empty. For the current user "
+                "request, you must return exactly "
+                "one of the following:\n"
+                "1. Exactly one appropriate tool "
+                "call; or\n"
+                "2. A short direct text answer when "
+                "no tool is required.\n"
+                "Never return an empty response."
+            )
+
+            retry_config = (
+                types.GenerateContentConfig(
+                    system_instruction=(
+                        retry_instruction
+                    ),
+                    temperature=0.0,
+                    max_output_tokens=512,
+                    tools=[
+                        self._academic_tools
+                    ],
+                    tool_config=(
+                        types.ToolConfig(
+                            function_calling_config=(
+                                types
+                                .FunctionCallingConfig(
+                                    mode="AUTO",
+                                )
+                            )
+                        )
+                    ),
+                    automatic_function_calling=(
+                        types
+                        .AutomaticFunctionCallingConfig(
+                            disable=True,
+                        )
+                    ),
+                )
+            )
+
+            routing_response = (
+                await self._client.models
+                .generate_content(
+                    model=self.generation_model,
+                    contents=routing_contents,
+                    config=retry_config,
+                )
+            )
+
+            function_calls = list(
+                routing_response.function_calls
+                or []
+            )
+
+            routing_answer = (
+                ""
+                if function_calls
+                else (
+                    routing_response.text or ""
+                ).strip()
+            )
+
+        if not function_calls:
+            answer = routing_answer
 
             if not answer:
                 raise RuntimeError(
                     "Gemini returned neither an "
-                    "answer nor a tool call"
+                    "answer nor a tool call after "
+                    "one retry"
                 )
 
             await (
@@ -560,21 +648,22 @@ Rules:
             )
         )
 
+        final_contents = [
+            *history_contents,
+            user_content,
+            function_call_content,
+            function_response_content,
+        ]
+
         final_response = (
             await self._client.models
             .generate_content(
                 model=self.generation_model,
-                contents=[
-                    *history_contents,
-                    user_content,
-                    function_call_content,
-                    function_response_content,
-                ],
+                contents=final_contents,
                 config=(
                     types.GenerateContentConfig(
                         system_instruction=(
-                            self
-                            .SYSTEM_INSTRUCTION
+                            self.SYSTEM_INSTRUCTION
                         ),
                         temperature=0.1,
                         max_output_tokens=1024,
@@ -594,9 +683,48 @@ Rules:
         ).strip()
 
         if not final_answer:
+            logger.warning(
+                "Gemini returned an empty final "
+                "answer; retrying once"
+            )
+
+            final_response = (
+                await self._client.models
+                .generate_content(
+                    model=self.generation_model,
+                    contents=final_contents,
+                    config=(
+                        types.GenerateContentConfig(
+                            system_instruction=(
+                                self.SYSTEM_INSTRUCTION
+                                + "\n\n"
+                                + "Return a non-empty "
+                                "final answer using "
+                                "the supplied tool "
+                                "result. Do not call "
+                                "another tool."
+                            ),
+                            temperature=0.0,
+                            max_output_tokens=1024,
+                            automatic_function_calling=(
+                                types
+                                .AutomaticFunctionCallingConfig(
+                                    disable=True,
+                                )
+                            ),
+                        )
+                    ),
+                )
+            )
+
+            final_answer = (
+                final_response.text or ""
+            ).strip()
+
+        if not final_answer:
             raise RuntimeError(
                 "Gemini returned an empty final "
-                "agent answer"
+                "agent answer after one retry"
             )
 
         await (
