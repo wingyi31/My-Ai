@@ -2,18 +2,22 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+
   <meta
     name="viewport"
     content="width=device-width, initial-scale=1"
   >
+
   <meta
     name="description"
-    content="StudyOps academic agent"
+    content="StudyOps durable academic agent"
   >
+
   <title>StudyOps</title>
+
   <link
     rel="stylesheet"
-    href="/static/styles.css"
+    href="/static/styles.css?v=20260829-1"
   >
 </head>
 
@@ -21,7 +25,12 @@
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-mark">S</div>
+        <div
+          class="brand-mark"
+          aria-hidden="true"
+        >
+          S
+        </div>
 
         <div>
           <h1>StudyOps</h1>
@@ -34,7 +43,28 @@
           Current scope
         </p>
 
-              <section class="sidebar-section">
+        <label for="user-id">
+          Canvas user ID
+        </label>
+
+        <input
+          id="user-id"
+          value="126345"
+          autocomplete="off"
+        >
+
+        <label for="course-id">
+          Course ID
+        </label>
+
+        <input
+          id="course-id"
+          value="96996"
+          autocomplete="off"
+        >
+      </section>
+
+      <section class="sidebar-section">
         <div class="conversation-heading">
           <p class="section-label">
             Conversations
@@ -52,29 +82,37 @@
         <select
           id="conversation-select"
           class="conversation-select"
-          aria-label="Conversation"
+          aria-label="Select conversation"
         >
-          <option>Loading conversations…</option>
+          <option value="">
+            Loading conversations…
+          </option>
         </select>
       </section>
 
-        <label for="user-id">
-          Canvas user ID
+      <section class="sidebar-section">
+        <p class="section-label">
+          Topic summary
+        </p>
+
+        <label for="summary-topic">
+          Topic from course materials
         </label>
+
         <input
-          id="user-id"
-          value="126345"
+          id="summary-topic"
+          maxlength="500"
+          placeholder="e.g. Memory hierarchy"
           autocomplete="off"
         >
 
-        <label for="course-id">
-          Course ID
-        </label>
-        <input
-          id="course-id"
-          value="96996"
-          autocomplete="off"
+        <button
+          id="generate-summary-button"
+          class="summary-button"
+          type="button"
         >
+          Generate personalized summary
+        </button>
       </section>
 
       <section class="sidebar-section">
@@ -116,13 +154,19 @@
       </section>
 
       <div class="security-note">
-        <span class="status-dot"></span>
+        <span
+          class="status-dot"
+          aria-hidden="true"
+        ></span>
 
         <div>
-          <strong>Confirmation protected</strong>
+          <strong>
+            Confirmation protected
+          </strong>
+
           <p>
-            Calendar writes require explicit
-            approval.
+            Calendar and Notion writes require
+            explicit approval.
           </p>
         </div>
       </div>
@@ -134,11 +178,16 @@
           <p class="eyebrow">
             CS3223 · Database Systems
           </p>
+
           <h2>Study workspace</h2>
         </div>
 
         <div class="header-status">
-          <span class="status-dot"></span>
+          <span
+            class="status-dot"
+            aria-hidden="true"
+          ></span>
+
           Connected
         </div>
       </header>
@@ -147,9 +196,17 @@
         id="messages"
         class="messages"
         aria-live="polite"
+        aria-label="Conversation messages"
       >
-        <article class="message assistant-message">
-          <div class="avatar">S</div>
+        <article
+          class="message assistant-message"
+        >
+          <div
+            class="avatar"
+            aria-hidden="true"
+          >
+            S
+          </div>
 
           <div class="message-body">
             <div class="message-label">
@@ -160,20 +217,26 @@
               <p>
                 Hello! I can search your course
                 materials, check Canvas deadlines,
-                explain assignments, and prepare
-                Calendar events for your approval.
+                explain assignments, generate
+                personalized topic summaries, and
+                prepare Calendar or Notion actions
+                for your approval.
               </p>
             </div>
           </div>
         </article>
       </section>
 
-      <form id="chat-form" class="composer">
+      <form
+        id="chat-form"
+        class="composer"
+      >
         <textarea
           id="message-input"
           rows="1"
           maxlength="8000"
           placeholder="Ask about your course…"
+          aria-label="Chat message"
           required
         ></textarea>
 
@@ -190,11 +253,13 @@
 
       <p class="composer-hint">
         StudyOps can make mistakes. Review every
-        Calendar action before confirming.
+        external action before confirming.
       </p>
     </main>
   </div>
 
-  <script src="/static/app.js"></script>
+  <script
+    src="/static/app.js?v=20260829-1"
+  ></script>
 </body>
 </html>

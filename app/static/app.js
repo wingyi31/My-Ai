@@ -22,15 +22,24 @@ const conversationSelect =
   document.querySelector(
     "#conversation-select"
   );
-
 const newChatButton =
   document.querySelector(
     "#new-chat-button"
   );
+const summaryTopicInput =
+  document.querySelector(
+    "#summary-topic"
+  );
+const generateSummaryButton =
+  document.querySelector(
+    "#generate-summary-button"
+  );
+
 
 function scrollToBottom() {
   messages.scrollTop = messages.scrollHeight;
 }
+
 
 function createElement(
   tag,
@@ -50,12 +59,13 @@ function createElement(
   return element;
 }
 
+
 function appendInlineText(
   container,
   text
 ) {
   const pattern =
-    /(\*\*[^*]+\*\*|\[Source \d+\])/g;
+    /(\*\*[^*]+\*\*|\[Sources? [^\]]+\])/g;
 
   let previousIndex = 0;
 
@@ -102,29 +112,81 @@ function appendInlineText(
   }
 }
 
+
 function renderAnswer(
   container,
   text
 ) {
   const lines = text.split("\n");
   let activeList = null;
+  let activeListType = null;
 
   for (const rawLine of lines) {
     const line = rawLine.trim();
 
     if (!line) {
       activeList = null;
+      activeListType = null;
+      continue;
+    }
+
+    const headingMatch = line.match(
+      /^(#{1,3})\s+(.+)$/
+    );
+
+    if (headingMatch) {
+      activeList = null;
+      activeListType = null;
+
+      const level = Math.min(
+        headingMatch[1].length + 1,
+        4
+      );
+      const heading =
+        document.createElement(
+          `h${level}`
+        );
+
+      appendInlineText(
+        heading,
+        headingMatch[2]
+      );
+      container.append(heading);
+      continue;
+    }
+
+    if (/^-{3,}$/.test(line)) {
+      activeList = null;
+      activeListType = null;
+
+      container.append(
+        document.createElement("hr")
+      );
       continue;
     }
 
     const bulletMatch = line.match(
       /^[-*]\s+(.+)$/
     );
+    const numberedMatch = line.match(
+      /^\d+[.)]\s+(.+)$/
+    );
 
-    if (bulletMatch) {
-      if (!activeList) {
+    if (bulletMatch || numberedMatch) {
+      const listType = bulletMatch
+        ? "ul"
+        : "ol";
+      const itemText = bulletMatch
+        ? bulletMatch[1]
+        : numberedMatch[1];
+
+      if (
+        !activeList
+        || activeListType !== listType
+      ) {
         activeList =
-          document.createElement("ul");
+          document.createElement(listType);
+        activeListType = listType;
         container.append(activeList);
       }
 
@@ -133,13 +195,14 @@ function renderAnswer(
 
       appendInlineText(
         item,
-        bulletMatch[1]
+        itemText
       );
       activeList.append(item);
       continue;
     }
 
     activeList = null;
+    activeListType = null;
 
     const paragraph =
       document.createElement("p");
@@ -148,6 +211,7 @@ function renderAnswer(
     container.append(paragraph);
   }
 }
+
 
 function createMessageShell(
   role,
@@ -198,6 +262,7 @@ function createMessageShell(
   };
 }
 
+
 function appendUserMessage(text) {
   const shell = createMessageShell("user");
   const paragraph =
@@ -208,6 +273,7 @@ function appendUserMessage(text) {
   messages.append(shell.article);
   scrollToBottom();
 }
+
 
 function appendLoadingMessage() {
   const shell =
@@ -231,6 +297,7 @@ function appendLoadingMessage() {
   return shell.article;
 }
 
+
 function appendErrorMessage(message) {
   const shell = createMessageShell(
     "assistant",
@@ -246,6 +313,7 @@ function appendErrorMessage(message) {
   scrollToBottom();
 }
 
+
 function addMetadata(
   body,
   response
@@ -255,13 +323,15 @@ function addMetadata(
     "message-meta"
   );
 
-  metadata.append(
-    createElement(
-      "span",
-      "badge",
-      response.generation_model
-    )
-  );
+  if (response.generation_model) {
+    metadata.append(
+      createElement(
+        "span",
+        "badge",
+        response.generation_model
+      )
+    );
+  }
 
   for (
     const toolCall
@@ -276,7 +346,9 @@ function addMetadata(
     );
   }
 
-  body.append(metadata);
+  if (metadata.children.length) {
+    body.append(metadata);
+  }
 
   if (
     response.tool_calls
@@ -304,6 +376,7 @@ function addMetadata(
   }
 }
 
+
 function addSources(
   body,
   sources
@@ -327,7 +400,7 @@ function addSources(
       "div",
       "source-title",
       `Source ${source.source_number} · ` +
-        source.filename
+        (source.filename || "Unknown file")
     );
 
     const page =
@@ -349,6 +422,7 @@ function addSources(
   body.append(container);
 }
 
+
 function formatDate(value) {
   if (!value) {
     return "Not provided";
@@ -368,6 +442,7 @@ function formatDate(value) {
     }
   );
 }
+
 
 async function requestJson(
   url,
@@ -390,14 +465,17 @@ async function requestJson(
     const detail =
       payload && payload.detail
         ? payload.detail
-        : `Request failed with status ` +
-          response.status;
+        : (
+          `Request failed with status ` +
+          response.status
+        );
 
     throw new Error(detail);
   }
 
   return payload;
 }
+
 
 function addPendingAction(
   body,
@@ -421,13 +499,16 @@ function addPendingAction(
     "",
     "Calendar proposal"
   );
-  const status = createElement(
+  const actionStatus = createElement(
     "span",
     "action-status",
     action.status
   );
 
-  header.append(heading, status);
+  header.append(
+    heading,
+    actionStatus
+  );
 
   const event = action.event || {};
   const grid =
@@ -491,7 +572,7 @@ function addPendingAction(
     "action-success"
   );
 
-  async function disableActions() {
+  function disableActions() {
     confirmButton.disabled = true;
     cancelButton.disabled = true;
   }
@@ -523,7 +604,7 @@ function addPendingAction(
             }
           );
 
-        status.textContent =
+        actionStatus.textContent =
           response.status;
 
         resultText.textContent =
@@ -582,7 +663,8 @@ function addPendingAction(
           }
         );
 
-        status.textContent = "cancelled";
+        actionStatus.textContent =
+          "cancelled";
         resultText.textContent =
           "Proposal cancelled.";
       } catch (error) {
@@ -609,6 +691,290 @@ function addPendingAction(
   body.append(card);
 }
 
+
+function addNotionPublishAction(
+  body,
+  summaryResponse,
+  scope
+) {
+  const card = createElement(
+    "section",
+    "action-card notion-action-card"
+  );
+
+  const header = createElement(
+    "div",
+    "action-header"
+  );
+  const heading = createElement(
+    "h3",
+    "",
+    "Publish summary to Notion"
+  );
+  const actionStatus = createElement(
+    "span",
+    "action-status",
+    "preview"
+  );
+
+  header.append(
+    heading,
+    actionStatus
+  );
+
+  const grid =
+    document.createElement("dl");
+
+  grid.className = "action-grid";
+
+  const fields = [
+    [
+      "Topic",
+      summaryResponse.topic,
+    ],
+    [
+      "Structure",
+      (
+        summaryResponse.section_order
+        || []
+      ).length + " sections",
+    ],
+    [
+      "Preference",
+      `Version ${
+        summaryResponse.preference_version
+      }`,
+    ],
+    [
+      "Destination",
+      "StudyOps Knowledge Base",
+    ],
+  ];
+
+  for (const [label, value] of fields) {
+    grid.append(
+      createElement("dt", "", label),
+      createElement("dd", "", value)
+    );
+  }
+
+  const buttons = createElement(
+    "div",
+    "action-buttons"
+  );
+  const resultText = createElement(
+    "div",
+    "action-success"
+  );
+
+  const prepareButton = createElement(
+    "button",
+    "confirm-button",
+    "Prepare Notion publish"
+  );
+
+  const confirmButton = createElement(
+    "button",
+    "confirm-button",
+    "Confirm publish"
+  );
+
+  const cancelButton = createElement(
+    "button",
+    "cancel-button",
+    "Cancel"
+  );
+
+  prepareButton.type = "button";
+  confirmButton.type = "button";
+  cancelButton.type = "button";
+
+  let preparedAction = null;
+
+  function disablePreparation() {
+    prepareButton.disabled = true;
+  }
+
+  function disableConfirmation() {
+    confirmButton.disabled = true;
+    cancelButton.disabled = true;
+  }
+
+  function enableConfirmation() {
+    confirmButton.disabled = false;
+    cancelButton.disabled = false;
+  }
+
+  prepareButton.addEventListener(
+    "click",
+    async () => {
+      disablePreparation();
+      resultText.textContent =
+        "Preparing confirmation…";
+
+      try {
+        preparedAction = await requestJson(
+          "/api/v1/agent/actions/" +
+            "notion/prepare",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              user_id: scope.userId,
+              course_id: scope.courseId,
+              session_id: scope.sessionId,
+              summary_id:
+                summaryResponse.summary_id,
+            }),
+          }
+        );
+
+        actionStatus.textContent =
+          preparedAction.status;
+
+        resultText.textContent =
+          "Review the summary, then confirm " +
+          "to create the Notion page. " +
+          `This proposal expires ${formatDate(
+            preparedAction.expires_at
+          )}.`;
+
+        buttons.replaceChildren(
+          confirmButton,
+          cancelButton
+        );
+      } catch (error) {
+        prepareButton.disabled = false;
+        resultText.textContent =
+          error.message;
+      }
+    }
+  );
+
+  confirmButton.addEventListener(
+    "click",
+    async () => {
+      if (!preparedAction) {
+        return;
+      }
+
+      disableConfirmation();
+      resultText.textContent =
+        "Publishing summary to Notion…";
+
+      try {
+        const response = await requestJson(
+          `/api/v1/agent/actions/notion/` +
+            `${encodeURIComponent(
+              preparedAction.action_id
+            )}/confirm`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              user_id: scope.userId,
+            }),
+          }
+        );
+
+        actionStatus.textContent =
+          response.status;
+
+        resultText.replaceChildren(
+          document.createTextNode(
+            response.already_completed
+              ? (
+                "This summary was already " +
+                "published."
+              )
+              : "Summary published to Notion."
+          )
+        );
+
+        const pageUrl =
+          response.action.notion_page_url;
+
+        if (pageUrl) {
+          const anchor =
+            document.createElement("a");
+
+          anchor.href = pageUrl;
+          anchor.target = "_blank";
+          anchor.rel = "noopener noreferrer";
+          anchor.textContent =
+            " Open in Notion";
+
+          resultText.append(anchor);
+        }
+      } catch (error) {
+        enableConfirmation();
+        resultText.textContent =
+          error.message;
+      }
+    }
+  );
+
+  cancelButton.addEventListener(
+    "click",
+    async () => {
+      if (!preparedAction) {
+        return;
+      }
+
+      disableConfirmation();
+      resultText.textContent =
+        "Cancelling Notion proposal…";
+
+      try {
+        await requestJson(
+          `/api/v1/agent/actions/notion/` +
+            `${encodeURIComponent(
+              preparedAction.action_id
+            )}/cancel`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              user_id: scope.userId,
+            }),
+          }
+        );
+
+        actionStatus.textContent =
+          "cancelled";
+        resultText.textContent =
+          "Notion publication cancelled.";
+        buttons.replaceChildren();
+      } catch (error) {
+        enableConfirmation();
+        resultText.textContent =
+          error.message;
+      }
+    }
+  );
+
+  buttons.append(prepareButton);
+
+  card.append(
+    header,
+    grid,
+    buttons,
+    resultText
+  );
+
+  body.append(card);
+}
+
+
 function appendAssistantResponse(
   response
 ) {
@@ -634,6 +1000,58 @@ function appendAssistantResponse(
   scrollToBottom();
 }
 
+
+function appendTopicSummaryResponse(
+  response,
+  scope
+) {
+  const shell =
+    createMessageShell("assistant");
+
+  renderAnswer(
+    shell.content,
+    response.summary
+  );
+
+  addMetadata(
+    shell.body,
+    {
+      generation_model:
+        response.generation_model,
+      tool_calls: [
+        {
+          name: "generate_topic_summary",
+          arguments: {
+            topic: response.topic,
+            preference_version:
+              response.preference_version,
+          },
+        },
+      ],
+    }
+  );
+
+  addSources(
+    shell.body,
+    response.sources
+  );
+
+  addNotionPublishAction(
+    shell.body,
+    response,
+    scope
+  );
+
+  shell.body.dataset.summaryId =
+    response.summary_id;
+  shell.body.dataset.summaryTopic =
+    response.topic;
+
+  messages.append(shell.article);
+  scrollToBottom();
+}
+
+
 function resizeComposer() {
   messageInput.style.height = "auto";
   messageInput.style.height =
@@ -643,6 +1061,7 @@ function resizeComposer() {
     )}px`;
 }
 
+
 function conversationStorageKey(
   userId,
   courseId
@@ -651,6 +1070,7 @@ function conversationStorageKey(
     `studyops-session:${userId}:${courseId}`
   );
 }
+
 
 function setActiveSessionId(
   userId,
@@ -665,6 +1085,7 @@ function setActiveSessionId(
     sessionId
   );
 }
+
 
 function getOrCreateSessionId(
   userId,
@@ -694,6 +1115,7 @@ function getOrCreateSessionId(
   return sessionId;
 }
 
+
 function renderWelcomeMessage() {
   messages.replaceChildren();
 
@@ -704,12 +1126,15 @@ function renderWelcomeMessage() {
     shell.content,
     "Hello! I can search your course " +
       "materials, check Canvas deadlines, " +
-      "explain assignments, and prepare " +
-      "Calendar events for your approval."
+      "explain assignments, generate " +
+      "personalized topic summaries, and " +
+      "prepare Calendar or Notion actions " +
+      "for your approval."
   );
 
   messages.append(shell.article);
 }
+
 
 function appendStoredAssistantMessage(
   text
@@ -720,6 +1145,7 @@ function appendStoredAssistantMessage(
   renderAnswer(shell.content, text);
   messages.append(shell.article);
 }
+
 
 async function loadConversation(
   sessionId
@@ -759,6 +1185,7 @@ async function loadConversation(
 
   scrollToBottom();
 }
+
 
 async function refreshConversationSelect() {
   const userId =
@@ -828,6 +1255,7 @@ async function refreshConversationSelect() {
     activeSessionId;
 }
 
+
 async function initializeConversationUi() {
   const userId =
     userIdInput.value.trim();
@@ -856,14 +1284,6 @@ async function sendMessage(text) {
     userIdInput.value.trim();
   const courseId =
     courseIdInput.value.trim();
-  const conversationSelect =
-    document.querySelector(
-        "#conversation-select"
-    );
-    const newChatButton =
-    document.querySelector(
-        "#new-chat-button"
-    );
 
   if (!userId || !courseId) {
     appendErrorMessage(
@@ -880,6 +1300,7 @@ async function sendMessage(text) {
     );
 
   appendUserMessage(text);
+
   const loading =
     appendLoadingMessage();
 
@@ -918,6 +1339,92 @@ async function sendMessage(text) {
   }
 }
 
+
+async function generateTopicSummary() {
+  const userId =
+    userIdInput.value.trim();
+  const courseId =
+    courseIdInput.value.trim();
+  const topic =
+    summaryTopicInput.value.trim();
+
+  if (!userId || !courseId) {
+    appendErrorMessage(
+      "Enter both a Canvas user ID " +
+        "and course ID."
+    );
+    return;
+  }
+
+  if (!topic) {
+    appendErrorMessage(
+      "Enter a topic to summarize."
+    );
+    summaryTopicInput.focus();
+    return;
+  }
+
+  const sessionId =
+    getOrCreateSessionId(
+      userId,
+      courseId
+    );
+
+  const scope = {
+    userId,
+    courseId,
+    sessionId,
+  };
+
+  appendUserMessage(
+    "Create a personalized summary of: " +
+      topic
+  );
+
+  const loading =
+    appendLoadingMessage();
+
+  generateSummaryButton.disabled = true;
+  summaryTopicInput.disabled = true;
+
+  try {
+    const response = await requestJson(
+      "/api/v1/agent/summaries/prepare",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type":
+            "application/json",
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          course_id: courseId,
+          session_id: sessionId,
+          topic,
+          source_limit: 10,
+        }),
+      }
+    );
+
+    loading.remove();
+
+    appendTopicSummaryResponse(
+      response,
+      scope
+    );
+
+    summaryTopicInput.value = "";
+  } catch (error) {
+    loading.remove();
+    appendErrorMessage(error.message);
+  } finally {
+    generateSummaryButton.disabled = false;
+    summaryTopicInput.disabled = false;
+    summaryTopicInput.focus();
+  }
+}
+
+
 chatForm.addEventListener(
   "submit",
   async (event) => {
@@ -936,10 +1443,12 @@ chatForm.addEventListener(
   }
 );
 
+
 messageInput.addEventListener(
   "input",
   resizeComposer
 );
+
 
 messageInput.addEventListener(
   "keydown",
@@ -953,6 +1462,24 @@ messageInput.addEventListener(
     }
   }
 );
+
+
+generateSummaryButton.addEventListener(
+  "click",
+  generateTopicSummary
+);
+
+
+summaryTopicInput.addEventListener(
+  "keydown",
+  async (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      await generateTopicSummary();
+    }
+  }
+);
+
 
 conversationSelect.addEventListener(
   "change",
@@ -985,6 +1512,7 @@ conversationSelect.addEventListener(
     }
   }
 );
+
 
 newChatButton.addEventListener(
   "click",
@@ -1023,6 +1551,7 @@ newChatButton.addEventListener(
   }
 );
 
+
 for (
   const input
   of [userIdInput, courseIdInput]
@@ -1038,6 +1567,7 @@ for (
     }
   );
 }
+
 
 for (
   const button
@@ -1056,9 +1586,11 @@ for (
   );
 }
 
+
 initializeConversationUi()
   .catch((error) => {
     appendErrorMessage(error.message);
   });
+
 
 messageInput.focus();
