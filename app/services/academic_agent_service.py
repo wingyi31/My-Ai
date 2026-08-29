@@ -10,6 +10,9 @@ from google.genai import types
 from app.repositories.pending_action_repository import (
     PendingCalendarAction,
 )
+from app.repositories.conversation_repository import (
+    ConversationRepository,
+)
 from app.services.calendar_action_service import (
     CalendarActionService,
 )
@@ -143,6 +146,10 @@ Rules:
 20. You may answer greetings and capability questions
     without calling a tool.
 21. Keep answers clear and concise.
+22. Use conversation history to understand follow-up
+    references. For factual course claims, call the
+    appropriate tool again instead of treating earlier
+    assistant messages as an authoritative source.
 """.strip()
 
     def __init__(
@@ -155,6 +162,9 @@ Rules:
         canvas_read_service: CanvasReadService,
         calendar_action_service: (
             CalendarActionService
+        ),
+        conversation_repository: (
+            ConversationRepository
         ),
         default_source_limit: int = 8,
     ) -> None:
@@ -199,6 +209,9 @@ Rules:
         )
         self._calendar_action_service = (
             calendar_action_service
+        )
+        self._conversation_repository = (
+            conversation_repository
         )
         self._default_source_limit = (
             default_source_limit
@@ -346,6 +359,7 @@ Rules:
         *,
         user_id: str,
         course_id: str,
+        session_id: str,
         message: str,
         source_limit: int | None = None,
     ) -> AcademicAgentAnswer:
@@ -354,6 +368,13 @@ Rules:
         if not cleaned_message:
             raise ValueError(
                 "Message cannot be empty"
+            )
+
+        cleaned_session_id = session_id.strip()
+
+        if not cleaned_session_id:
+            raise ValueError(
+                "Session ID cannot be empty"
             )
 
         effective_source_limit = (
@@ -368,6 +389,34 @@ Rules:
                 "1 and 20"
             )
 
+        conversation_history = (
+            await self
+            ._conversation_repository
+            .load_recent_messages(
+                user_id=str(user_id),
+                course_id=str(course_id),
+                session_id=cleaned_session_id,
+                limit=10,
+            )
+        )
+
+        history_contents = [
+            types.Content(
+                role=(
+                    "user"
+                    if history_message.role == "user"
+                    else "model"
+                ),
+                parts=[
+                    types.Part.from_text(
+                        text=history_message.content,
+                    )
+                ],
+            )
+            for history_message
+            in conversation_history
+        ]
+
         user_content = types.Content(
             role="user",
             parts=[
@@ -381,7 +430,10 @@ Rules:
             await self._client.models
             .generate_content(
                 model=self.generation_model,
-                contents=[user_content],
+                contents=[
+                    *history_contents,
+                    user_content,
+                ],
                 config=(
                     types.GenerateContentConfig(
                         system_instruction=(
@@ -429,6 +481,17 @@ Rules:
                     "Gemini returned neither an "
                     "answer nor a tool call"
                 )
+
+            await (
+                self._conversation_repository
+                .append_turn(
+                    user_id=str(user_id),
+                    course_id=str(course_id),
+                    session_id=cleaned_session_id,
+                    user_message=cleaned_message,
+                    assistant_message=answer,
+                )
+            )
 
             return AcademicAgentAnswer(
                 message=cleaned_message,
@@ -502,6 +565,7 @@ Rules:
             .generate_content(
                 model=self.generation_model,
                 contents=[
+                    *history_contents,
                     user_content,
                     function_call_content,
                     function_response_content,
@@ -534,6 +598,17 @@ Rules:
                 "Gemini returned an empty final "
                 "agent answer"
             )
+
+        await (
+            self._conversation_repository
+            .append_turn(
+                user_id=str(user_id),
+                course_id=str(course_id),
+                session_id=cleaned_session_id,
+                user_message=cleaned_message,
+                assistant_message=final_answer,
+            )
+        )
 
         return AcademicAgentAnswer(
             message=cleaned_message,

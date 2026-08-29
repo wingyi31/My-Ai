@@ -18,6 +18,15 @@ const userIdInput = document.querySelector(
 const courseIdInput = document.querySelector(
   "#course-id"
 );
+const conversationSelect =
+  document.querySelector(
+    "#conversation-select"
+  );
+
+const newChatButton =
+  document.querySelector(
+    "#new-chat-button"
+  );
 
 function scrollToBottom() {
   messages.scrollTop = messages.scrollHeight;
@@ -634,11 +643,227 @@ function resizeComposer() {
     )}px`;
 }
 
+function conversationStorageKey(
+  userId,
+  courseId
+) {
+  return (
+    `studyops-session:${userId}:${courseId}`
+  );
+}
+
+function setActiveSessionId(
+  userId,
+  courseId,
+  sessionId
+) {
+  window.localStorage.setItem(
+    conversationStorageKey(
+      userId,
+      courseId
+    ),
+    sessionId
+  );
+}
+
+function getOrCreateSessionId(
+  userId,
+  courseId
+) {
+  const storageKey =
+    conversationStorageKey(
+      userId,
+      courseId
+    );
+
+  let sessionId =
+    window.localStorage.getItem(
+      storageKey
+    );
+
+  if (!sessionId) {
+    sessionId =
+      window.crypto.randomUUID();
+
+    window.localStorage.setItem(
+      storageKey,
+      sessionId
+    );
+  }
+
+  return sessionId;
+}
+
+function renderWelcomeMessage() {
+  messages.replaceChildren();
+
+  const shell =
+    createMessageShell("assistant");
+
+  renderAnswer(
+    shell.content,
+    "Hello! I can search your course " +
+      "materials, check Canvas deadlines, " +
+      "explain assignments, and prepare " +
+      "Calendar events for your approval."
+  );
+
+  messages.append(shell.article);
+}
+
+function appendStoredAssistantMessage(
+  text
+) {
+  const shell =
+    createMessageShell("assistant");
+
+  renderAnswer(shell.content, text);
+  messages.append(shell.article);
+}
+
+async function loadConversation(
+  sessionId
+) {
+  const userId =
+    userIdInput.value.trim();
+  const courseId =
+    courseIdInput.value.trim();
+
+  const query = new URLSearchParams({
+    user_id: userId,
+    course_id: courseId,
+  });
+
+  const history = await requestJson(
+    `/api/v1/agent/conversations/` +
+      `${encodeURIComponent(sessionId)}` +
+      `/messages?${query.toString()}`
+  );
+
+  messages.replaceChildren();
+
+  if (!history.messages.length) {
+    renderWelcomeMessage();
+    return;
+  }
+
+  for (const message of history.messages) {
+    if (message.role === "user") {
+      appendUserMessage(message.content);
+    } else {
+      appendStoredAssistantMessage(
+        message.content
+      );
+    }
+  }
+
+  scrollToBottom();
+}
+
+async function refreshConversationSelect() {
+  const userId =
+    userIdInput.value.trim();
+  const courseId =
+    courseIdInput.value.trim();
+
+  if (!userId || !courseId) {
+    conversationSelect.replaceChildren(
+      new Option(
+        "Enter user and course IDs",
+        ""
+      )
+    );
+    conversationSelect.disabled = true;
+    return;
+  }
+
+  conversationSelect.disabled = false;
+
+  const activeSessionId =
+    getOrCreateSessionId(
+      userId,
+      courseId
+    );
+
+  const query = new URLSearchParams({
+    user_id: userId,
+    course_id: courseId,
+    limit: "20",
+  });
+
+  const conversations =
+    await requestJson(
+      `/api/v1/agent/conversations?` +
+        query.toString()
+    );
+
+  conversationSelect.replaceChildren();
+
+  const activeExists =
+    conversations.some(
+      (conversation) =>
+        conversation.session_id
+        === activeSessionId
+    );
+
+  if (!activeExists) {
+    conversationSelect.append(
+      new Option(
+        "New conversation",
+        activeSessionId
+      )
+    );
+  }
+
+  for (const conversation of conversations) {
+    conversationSelect.append(
+      new Option(
+        conversation.title,
+        conversation.session_id
+      )
+    );
+  }
+
+  conversationSelect.value =
+    activeSessionId;
+}
+
+async function initializeConversationUi() {
+  const userId =
+    userIdInput.value.trim();
+  const courseId =
+    courseIdInput.value.trim();
+
+  if (!userId || !courseId) {
+    await refreshConversationSelect();
+    renderWelcomeMessage();
+    return;
+  }
+
+  const sessionId =
+    getOrCreateSessionId(
+      userId,
+      courseId
+    );
+
+  await refreshConversationSelect();
+  await loadConversation(sessionId);
+}
+
+
 async function sendMessage(text) {
   const userId =
     userIdInput.value.trim();
   const courseId =
     courseIdInput.value.trim();
+  const conversationSelect =
+    document.querySelector(
+        "#conversation-select"
+    );
+    const newChatButton =
+    document.querySelector(
+        "#new-chat-button"
+    );
 
   if (!userId || !courseId) {
     appendErrorMessage(
@@ -647,6 +872,12 @@ async function sendMessage(text) {
     );
     return;
   }
+
+  const sessionId =
+    getOrCreateSessionId(
+      userId,
+      courseId
+    );
 
   appendUserMessage(text);
   const loading =
@@ -667,6 +898,7 @@ async function sendMessage(text) {
         body: JSON.stringify({
           user_id: userId,
           course_id: courseId,
+          session_id: sessionId,
           message: text,
           source_limit: 5,
         }),
@@ -675,6 +907,7 @@ async function sendMessage(text) {
 
     loading.remove();
     appendAssistantResponse(response);
+    await refreshConversationSelect();
   } catch (error) {
     loading.remove();
     appendErrorMessage(error.message);
@@ -721,6 +954,91 @@ messageInput.addEventListener(
   }
 );
 
+conversationSelect.addEventListener(
+  "change",
+  async () => {
+    const userId =
+      userIdInput.value.trim();
+    const courseId =
+      courseIdInput.value.trim();
+    const sessionId =
+      conversationSelect.value;
+
+    if (
+      !userId
+      || !courseId
+      || !sessionId
+    ) {
+      return;
+    }
+
+    setActiveSessionId(
+      userId,
+      courseId,
+      sessionId
+    );
+
+    try {
+      await loadConversation(sessionId);
+    } catch (error) {
+      appendErrorMessage(error.message);
+    }
+  }
+);
+
+newChatButton.addEventListener(
+  "click",
+  async () => {
+    const userId =
+      userIdInput.value.trim();
+    const courseId =
+      courseIdInput.value.trim();
+
+    if (!userId || !courseId) {
+      appendErrorMessage(
+        "Enter both a Canvas user ID " +
+          "and course ID."
+      );
+      return;
+    }
+
+    const sessionId =
+      window.crypto.randomUUID();
+
+    setActiveSessionId(
+      userId,
+      courseId,
+      sessionId
+    );
+
+    renderWelcomeMessage();
+
+    try {
+      await refreshConversationSelect();
+    } catch (error) {
+      appendErrorMessage(error.message);
+    }
+
+    messageInput.focus();
+  }
+);
+
+for (
+  const input
+  of [userIdInput, courseIdInput]
+) {
+  input.addEventListener(
+    "change",
+    async () => {
+      try {
+        await initializeConversationUi();
+      } catch (error) {
+        appendErrorMessage(error.message);
+      }
+    }
+  );
+}
+
 for (
   const button
   of document.querySelectorAll(
@@ -737,5 +1055,10 @@ for (
     }
   );
 }
+
+initializeConversationUi()
+  .catch((error) => {
+    appendErrorMessage(error.message);
+  });
 
 messageInput.focus();

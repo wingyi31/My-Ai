@@ -22,6 +22,11 @@ class AgentChatRequest(BaseModel):
         min_length=1,
         max_length=200,
     )
+    session_id: str = Field(
+        min_length=1,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
     message: str = Field(
         min_length=1,
         max_length=8000,
@@ -87,6 +92,7 @@ class AgentChatResponse(BaseModel):
     message: str
     answer: str
     generation_model: str
+    session_id: str
     tool_calls: list[
         AgentToolCallResponse
     ]
@@ -94,6 +100,33 @@ class AgentChatResponse(BaseModel):
     pending_action: (
         PendingCalendarActionResponse | None
     ) = None
+
+class ConversationSummaryResponse(
+    BaseModel
+):
+    session_id: str
+    course_id: str
+    title: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ConversationMessageResponse(
+    BaseModel
+):
+    role: Literal["user", "assistant"]
+    content: str
+    created_at: datetime
+
+
+class ConversationHistoryResponse(
+    BaseModel
+):
+    session_id: str
+    course_id: str
+    messages: list[
+        ConversationMessageResponse
+    ]
 
 
 class CalendarActionConfirmationResponse(

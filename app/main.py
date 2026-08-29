@@ -29,6 +29,9 @@ from app.jobs.gmail_sync import (
 from app.repositories.firestore_client import (
     get_firestore_client,
 )
+from app.repositories.conversation_repository import (
+    ConversationRepository,
+)
 from app.routes.ui import (
     router as ui_router,
 )
@@ -247,6 +250,11 @@ async def lifespan(app: FastAPI):
     firestore_client = (
         get_firestore_client()
     )
+    conversation_repository = (
+        ConversationRepository(
+            firestore_client
+        )
+    )
     pending_action_repository = (
         PendingActionRepository(
             firestore_client
@@ -272,6 +280,9 @@ async def lifespan(app: FastAPI):
     )
     app.state.calendar_action_service = (
         calendar_action_service
+    )
+    app.state.conversation_repository = (
+        conversation_repository
     )
 
     embedding_service = (
@@ -338,6 +349,9 @@ async def lifespan(app: FastAPI):
             ),
             calendar_action_service=(
                 calendar_action_service
+            ),
+            conversation_repository=(
+                conversation_repository
             ),
         )
     )

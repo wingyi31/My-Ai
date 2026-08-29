@@ -1,7 +1,20 @@
 import asyncio
 
 from app.services.canvas_reader import CanvasReadService
+from datetime import UTC, datetime
 
+FIXED_NOW = datetime(
+    2026,
+    8,
+    27,
+    12,
+    0,
+    tzinfo=UTC,
+)
+
+
+def fixed_now() -> datetime:
+    return FIXED_NOW
 
 class FakeCanvasClient:
     async def get_current_user(self) -> dict:
@@ -103,8 +116,10 @@ class FakeCanvasClient:
 
 def test_canvas_reader_shapes_and_categorizes_course_content() -> None:
     async def run() -> None:
-        service = CanvasReadService(FakeCanvasClient())  # type: ignore[arg-type]
-
+        service = CanvasReadService(
+            FakeCanvasClient(),
+            now_provider=fixed_now,
+        )
         result = await service.course_content("42")
 
         assert result["access_mode"] == "read-only"
@@ -136,8 +151,10 @@ def test_canvas_reader_shapes_and_categorizes_course_content() -> None:
 
 def test_canvas_reader_discovers_active_courses_before_loading_details() -> None:
     async def run() -> None:
-        service = CanvasReadService(FakeCanvasClient())  # type: ignore[arg-type]
-
+        service = CanvasReadService(
+            FakeCanvasClient(),
+            now_provider=fixed_now,
+        )
         result = await service.active_course_details()
 
         assert result["access_mode"] == "read-only"

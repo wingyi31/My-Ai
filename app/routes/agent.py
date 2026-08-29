@@ -4,6 +4,7 @@ from fastapi import (
     APIRouter,
     HTTPException,
     Path,
+    Query,
     Request,
     status,
 )
@@ -28,6 +29,9 @@ from app.models.agent import (
     CalendarActionConfirmationResponse,
     CalendarActionPrepareRequest,
     PendingCalendarActionResponse,
+    ConversationHistoryResponse,
+    ConversationMessageResponse,
+    ConversationSummaryResponse,
 )
 from app.models.rag import RagSourceResponse
 from app.repositories.pending_action_repository import (
@@ -35,6 +39,9 @@ from app.repositories.pending_action_repository import (
     PendingActionNotFoundError,
     PendingActionStateError,
     PendingCalendarAction,
+)
+from app.repositories.conversation_repository import (
+    ConversationRepository,
 )
 from app.services.academic_agent_service import (
     AcademicAgentService,
@@ -55,6 +62,30 @@ ActionId = Annotated[
         min_length=1,
         max_length=200,
         pattern=r"^[A-Za-z0-9_-]+$",
+    ),
+]
+SessionId = Annotated[
+    str,
+    Path(
+        min_length=1,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    ),
+]
+
+UserIdQuery = Annotated[
+    str,
+    Query(
+        min_length=1,
+        max_length=200,
+    ),
+]
+
+CourseIdQuery = Annotated[
+    str,
+    Query(
+        min_length=1,
+        max_length=200,
     ),
 ]
 
@@ -79,6 +110,28 @@ def get_agent_service(
         )
 
     return service
+
+def get_conversation_repository(
+    request: Request,
+) -> ConversationRepository:
+    repository = getattr(
+        request.app.state,
+        "conversation_repository",
+        None,
+    )
+
+    if repository is None:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_503_SERVICE_UNAVAILABLE
+            ),
+            detail=(
+                "Conversation repository is not "
+                "ready"
+            ),
+        )
+
+    return repository
 
 
 def get_calendar_action_service(
@@ -127,6 +180,98 @@ def pending_action_response(
         ),
     )
 
+@router.get(
+    "/conversations",
+    response_model=list[
+        ConversationSummaryResponse
+    ],
+)
+async def list_conversations(
+    request: Request,
+    user_id: UserIdQuery,
+    course_id: CourseIdQuery,
+    limit: Annotated[
+        int,
+        Query(ge=1, le=50),
+    ] = 20,
+) -> list[ConversationSummaryResponse]:
+    repository = (
+        get_conversation_repository(request)
+    )
+
+    try:
+        conversations = (
+            await repository.list_conversations(
+                user_id=user_id,
+                course_id=course_id,
+                limit=limit,
+            )
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_400_BAD_REQUEST
+            ),
+            detail=str(error),
+        ) from error
+
+    return [
+        ConversationSummaryResponse(
+            session_id=conversation.session_id,
+            course_id=conversation.course_id,
+            title=conversation.title,
+            created_at=conversation.created_at,
+            updated_at=conversation.updated_at,
+        )
+        for conversation in conversations
+    ]
+
+
+@router.get(
+    "/conversations/{session_id}/messages",
+    response_model=ConversationHistoryResponse,
+)
+async def get_conversation_messages(
+    request: Request,
+    session_id: SessionId,
+    user_id: UserIdQuery,
+    course_id: CourseIdQuery,
+) -> ConversationHistoryResponse:
+    repository = (
+        get_conversation_repository(request)
+    )
+
+    try:
+        messages = (
+            await repository
+            .load_recent_messages(
+                user_id=user_id,
+                course_id=course_id,
+                session_id=session_id,
+                limit=100,
+            )
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_400_BAD_REQUEST
+            ),
+            detail=str(error),
+        ) from error
+
+    return ConversationHistoryResponse(
+        session_id=session_id,
+        course_id=course_id,
+        messages=[
+            ConversationMessageResponse(
+                role=message.role,
+                content=message.content,
+                created_at=message.created_at,
+            )
+            for message in messages
+        ],
+    )
+
 
 @router.post(
     "/chat",
@@ -142,6 +287,7 @@ async def chat_with_agent(
         result = await service.chat(
             user_id=payload.user_id,
             course_id=payload.course_id,
+            session_id=payload.session_id,
             message=payload.message,
             source_limit=payload.source_limit,
         )
@@ -192,6 +338,7 @@ async def chat_with_agent(
 
     return AgentChatResponse(
         message=result.message,
+        session_id=payload.session_id,
         answer=result.answer,
         generation_model=(
             result.generation_model
