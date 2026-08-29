@@ -1303,13 +1303,6 @@ async def chat_with_agent(
         ),
     )
 
-def pending_action_response(
-    action: PendingCalendarAction,
-) -> PendingCalendarActionResponse:
-    return PendingCalendarActionResponse(
-        # Existing fields remain here
-    )
-
 
 def summary_preferences_response(
     preferences: SummaryPreferences,
