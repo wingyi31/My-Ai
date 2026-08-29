@@ -32,6 +32,8 @@ from app.models.agent import (
     ConversationHistoryResponse,
     ConversationMessageResponse,
     ConversationSummaryResponse,
+    SummaryPreferencesResponse,
+    SummaryPreferencesUpdateRequest,
 )
 from app.models.rag import RagSourceResponse
 from app.repositories.pending_action_repository import (
@@ -42,6 +44,14 @@ from app.repositories.pending_action_repository import (
 )
 from app.repositories.conversation_repository import (
     ConversationRepository,
+)
+from app.repositories.episodic_memory_repository import (
+    EpisodicMemoryRepository,
+)
+from app.repositories.summary_preference_repository import (
+    SummaryPreferenceError,
+    SummaryPreferenceRepository,
+    SummaryPreferences,
 )
 from app.services.academic_agent_service import (
     AcademicAgentService,
@@ -128,6 +138,51 @@ def get_conversation_repository(
             detail=(
                 "Conversation repository is not "
                 "ready"
+            ),
+        )
+
+    return repository
+
+def get_episodic_memory_repository(
+    request: Request,
+) -> EpisodicMemoryRepository:
+    repository = getattr(
+        request.app.state,
+        "episodic_memory_repository",
+        None,
+    )
+
+    if repository is None:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_503_SERVICE_UNAVAILABLE
+            ),
+            detail=(
+                "Episodic memory repository is "
+                "not ready"
+            ),
+        )
+
+    return repository
+
+
+def get_summary_preference_repository(
+    request: Request,
+) -> SummaryPreferenceRepository:
+    repository = getattr(
+        request.app.state,
+        "summary_preference_repository",
+        None,
+    )
+
+    if repository is None:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_503_SERVICE_UNAVAILABLE
+            ),
+            detail=(
+                "Summary preference repository "
+                "is not ready"
             ),
         )
 
@@ -272,6 +327,122 @@ async def get_conversation_messages(
         ],
     )
 
+@router.get(
+    "/preferences/summary",
+    response_model=(
+        SummaryPreferencesResponse
+    ),
+)
+async def get_summary_preferences(
+    request: Request,
+    user_id: UserIdQuery,
+) -> SummaryPreferencesResponse:
+    repository = (
+        get_summary_preference_repository(
+            request
+        )
+    )
+
+    try:
+        preferences = await (
+            repository.get_summary_preferences(
+                user_id=user_id
+            )
+        )
+    except SummaryPreferenceError as error:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+            ),
+            detail=str(error),
+        ) from error
+
+    return summary_preferences_response(
+        preferences
+    )
+
+
+@router.put(
+    "/preferences/summary",
+    response_model=(
+        SummaryPreferencesResponse
+    ),
+)
+async def update_summary_preferences(
+    payload: SummaryPreferencesUpdateRequest,
+    request: Request,
+) -> SummaryPreferencesResponse:
+    preference_repository = (
+        get_summary_preference_repository(
+            request
+        )
+    )
+    episodic_repository = (
+        get_episodic_memory_repository(
+            request
+        )
+    )
+
+    try:
+        preferences = await (
+            preference_repository
+            .save_summary_preferences(
+                user_id=payload.user_id,
+                detail_level=(
+                    payload.detail_level
+                ),
+                section_order=(
+                    payload.section_order
+                ),
+                preferred_language=(
+                    payload.preferred_language
+                ),
+                include_flashcards=(
+                    payload.include_flashcards
+                ),
+                include_source_links=(
+                    payload.include_source_links
+                ),
+            )
+        )
+
+        await episodic_repository.record_event(
+            user_id=payload.user_id,
+            course_id=payload.course_id,
+            session_id=payload.session_id,
+            event_type=(
+                "preference.summary_confirmed"
+            ),
+            entity_type=(
+                "summary_preferences"
+            ),
+            entity_id=str(
+                preferences.version
+            ),
+            payload={
+                "detail_level": (
+                    preferences.detail_level
+                ),
+                "section_order": list(
+                    preferences.section_order
+                ),
+                "preferred_language": (
+                    preferences
+                    .preferred_language
+                ),
+            },
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_400_BAD_REQUEST
+            ),
+            detail=str(error),
+        ) from error
+
+    return summary_preferences_response(
+        preferences
+    )
 
 @router.post(
     "/chat",
@@ -354,6 +525,45 @@ async def chat_with_agent(
             else None
         ),
     )
+
+def pending_action_response(
+    action: PendingCalendarAction,
+) -> PendingCalendarActionResponse:
+    return PendingCalendarActionResponse(
+        # Existing fields remain here
+    )
+
+
+def summary_preferences_response(
+    preferences: SummaryPreferences,
+) -> SummaryPreferencesResponse:
+    return SummaryPreferencesResponse(
+        user_id=preferences.user_id,
+        detail_level=(
+            preferences.detail_level
+        ),
+        section_order=list(
+            preferences.section_order
+        ),
+        preferred_language=(
+            preferences.preferred_language
+        ),
+        include_flashcards=(
+            preferences.include_flashcards
+        ),
+        include_source_links=(
+            preferences.include_source_links
+        ),
+        version=preferences.version,
+        confirmed=preferences.confirmed,
+        updated_at=preferences.updated_at,
+    )
+
+
+@router.get(
+    "/conversations",
+    # Existing route continues here
+)
 
 
 @router.post(

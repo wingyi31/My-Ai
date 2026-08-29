@@ -128,6 +128,56 @@ class ConversationHistoryResponse(
         ConversationMessageResponse
     ]
 
+class SummaryPreferencesUpdateRequest(
+    BaseModel
+):
+    user_id: str = Field(
+        min_length=1,
+        max_length=200,
+    )
+    course_id: str = Field(
+        min_length=1,
+        max_length=200,
+    )
+    session_id: str = Field(
+        min_length=1,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+    detail_level: Literal[
+        "concise",
+        "balanced",
+        "detailed",
+    ]
+    section_order: list[str] = Field(
+        min_length=1,
+        max_length=12,
+    )
+    preferred_language: str = Field(
+        min_length=1,
+        max_length=50,
+    )
+    include_flashcards: bool = True
+    include_source_links: bool = True
+
+
+class SummaryPreferencesResponse(
+    BaseModel
+):
+    user_id: str
+    detail_level: Literal[
+        "concise",
+        "balanced",
+        "detailed",
+    ]
+    section_order: list[str]
+    preferred_language: str
+    include_flashcards: bool
+    include_source_links: bool
+    version: int
+    confirmed: bool
+    updated_at: datetime | None
+
 
 class CalendarActionConfirmationResponse(
     BaseModel

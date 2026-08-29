@@ -32,6 +32,12 @@ from app.repositories.firestore_client import (
 from app.repositories.conversation_repository import (
     ConversationRepository,
 )
+from app.repositories.episodic_memory_repository import (
+    EpisodicMemoryRepository,
+)
+from app.repositories.summary_preference_repository import (
+    SummaryPreferenceRepository,
+)
 from app.routes.ui import (
     router as ui_router,
 )
@@ -255,6 +261,16 @@ async def lifespan(app: FastAPI):
             firestore_client
         )
     )
+    episodic_memory_repository = (
+        EpisodicMemoryRepository(
+            firestore_client
+        )
+    )
+    summary_preference_repository = (
+        SummaryPreferenceRepository(
+            firestore_client
+        )
+    )
     pending_action_repository = (
         PendingActionRepository(
             firestore_client
@@ -283,6 +299,12 @@ async def lifespan(app: FastAPI):
     )
     app.state.conversation_repository = (
         conversation_repository
+    )
+    app.state.episodic_memory_repository = (
+        episodic_memory_repository
+    )
+    app.state.summary_preference_repository = (
+        summary_preference_repository
     )
 
     embedding_service = (
