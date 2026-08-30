@@ -2,8 +2,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Header, HTTPException, Path, Query, Request, status
 
-from app.api.routes import verify_scheduler_secret
 from app.connectors.canvas import CanvasApiError, CanvasNotConfiguredError
+from app.routes.dependencies import verify_scheduler_secret
 from app.services.canvas_reader import CanvasReadService
 
 router = APIRouter(prefix="/canvas", tags=["Canvas"])

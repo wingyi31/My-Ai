@@ -6,6 +6,7 @@ import pytest
 
 from app.connectors.gmail.oauth import (
     GMAIL_READONLY_SCOPE,
+    GOOGLE_OAUTH_SCOPES,
     GmailCredentialStore,
     GmailOAuthClient,
     InvalidOAuthStateError,
@@ -43,7 +44,7 @@ def test_authorization_url_and_code_exchange() -> None:
                     "access_token": "access-token",
                     "refresh_token": "refresh-token",
                     "expires_in": 3600,
-                    "scope": GMAIL_READONLY_SCOPE,
+                    "scope": GOOGLE_OAUTH_SCOPES,
                     "token_type": "Bearer",
                 },
             )
@@ -59,7 +60,9 @@ def test_authorization_url_and_code_exchange() -> None:
             )
             url = oauth.authorization_url()
             query = parse_qs(urlparse(url).query)
-            assert query["scope"] == [GMAIL_READONLY_SCOPE]
+            assert query["scope"] == [
+                GOOGLE_OAUTH_SCOPES
+            ]            
             assert query["access_type"] == ["offline"]
 
             tokens = await oauth.exchange_code(

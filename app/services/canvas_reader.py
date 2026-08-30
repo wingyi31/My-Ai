@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Awaitable, Iterable
+from collections.abc import (
+    Awaitable,
+    Callable,
+    Iterable,
+)
 from datetime import UTC, datetime
 from typing import Any
 
@@ -28,9 +32,28 @@ class CanvasReadService:
         client: CanvasClient,
         *,
         max_concurrent_courses: int = 3,
+        now_provider: (
+            Callable[[], datetime] | None
+        ) = None,
     ) -> None:
         self._client = client
-        self._max_concurrent_courses = max(1, max_concurrent_courses)
+        self._max_concurrent_courses = max(
+            1,
+            max_concurrent_courses,
+        )
+        self._now_provider = (
+            now_provider
+            if now_provider is not None
+            else lambda: datetime.now(UTC)
+        )
+
+    def _now(self) -> datetime:
+        current = self._now_provider()
+
+        if current.tzinfo is None:
+            return current.replace(tzinfo=UTC)
+
+        return current.astimezone(UTC)
 
     async def profile(self) -> dict[str, Any]:
         profile = await self._client.get_current_user()
@@ -75,7 +98,7 @@ class CanvasReadService:
 
         return {
             "access_mode": "read-only",
-            "generated_at": datetime.now(UTC).isoformat(),
+            "generated_at": self._now().isoformat(),
             "course_count": len(details),
             "courses": details,
             "deadlines": deadlines,
@@ -93,7 +116,7 @@ class CanvasReadService:
         announcement_start = self._announcement_start(
             course.get("start_at") or term_start
         )
-        announcement_end = datetime.now(UTC).isoformat()
+        announcement_end = self._now().isoformat()
 
         modules, assignments, quizzes, files, announcements = await asyncio.gather(
             self._read_optional(
@@ -498,23 +521,40 @@ class CanvasReadService:
         except ValueError:
             return float("inf")
 
-    @classmethod
-    def _is_upcoming(cls, item: dict[str, Any]) -> bool:
-        timestamp = cls._deadline_sort_key(item)
-        return timestamp != float("inf") and timestamp >= datetime.now(UTC).timestamp()
+    def _is_upcoming(
+        self,
+        item: dict[str, Any],
+    ) -> bool:
+        timestamp = self._deadline_sort_key(
+            item
+        )
 
-    @staticmethod
-    def _announcement_start(value: Any) -> str | None:
+        return (
+            timestamp != float("inf")
+            and timestamp
+            >= self._now().timestamp()
+        )
+
+    def _announcement_start(
+        self,
+        value: Any,
+    ) -> str | None:
         if not isinstance(value, str) or not value:
             return None
+
         try:
-            start = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            start = datetime.fromisoformat(
+                value.replace("Z", "+00:00")
+            )
         except ValueError:
             return None
+
         if start.tzinfo is None:
             start = start.replace(tzinfo=UTC)
-        if start > datetime.now(UTC):
+
+        if start > self._now():
             return None
+
         return value
 
     @staticmethod

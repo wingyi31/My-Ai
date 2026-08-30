@@ -1,0 +1,1596 @@
+"use strict";
+
+const messages = document.querySelector(
+  "#messages"
+);
+const chatForm = document.querySelector(
+  "#chat-form"
+);
+const messageInput = document.querySelector(
+  "#message-input"
+);
+const sendButton = document.querySelector(
+  "#send-button"
+);
+const userIdInput = document.querySelector(
+  "#user-id"
+);
+const courseIdInput = document.querySelector(
+  "#course-id"
+);
+const conversationSelect =
+  document.querySelector(
+    "#conversation-select"
+  );
+const newChatButton =
+  document.querySelector(
+    "#new-chat-button"
+  );
+const summaryTopicInput =
+  document.querySelector(
+    "#summary-topic"
+  );
+const generateSummaryButton =
+  document.querySelector(
+    "#generate-summary-button"
+  );
+
+
+function scrollToBottom() {
+  messages.scrollTop = messages.scrollHeight;
+}
+
+
+function createElement(
+  tag,
+  className,
+  text
+) {
+  const element = document.createElement(tag);
+
+  if (className) {
+    element.className = className;
+  }
+
+  if (text !== undefined) {
+    element.textContent = text;
+  }
+
+  return element;
+}
+
+
+function appendInlineText(
+  container,
+  text
+) {
+  const pattern =
+    /(\*\*[^*]+\*\*|\[Sources? [^\]]+\])/g;
+
+  let previousIndex = 0;
+
+  for (const match of text.matchAll(pattern)) {
+    if (match.index > previousIndex) {
+      container.append(
+        document.createTextNode(
+          text.slice(
+            previousIndex,
+            match.index
+          )
+        )
+      );
+    }
+
+    const value = match[0];
+
+    if (value.startsWith("**")) {
+      const strong =
+        document.createElement("strong");
+
+      strong.textContent = value.slice(2, -2);
+      container.append(strong);
+    } else {
+      container.append(
+        createElement(
+          "span",
+          "citation",
+          value
+        )
+      );
+    }
+
+    previousIndex =
+      match.index + value.length;
+  }
+
+  if (previousIndex < text.length) {
+    container.append(
+      document.createTextNode(
+        text.slice(previousIndex)
+      )
+    );
+  }
+}
+
+
+function renderAnswer(
+  container,
+  text
+) {
+  const lines = text.split("\n");
+  let activeList = null;
+  let activeListType = null;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+
+    if (!line) {
+      activeList = null;
+      activeListType = null;
+      continue;
+    }
+
+    const headingMatch = line.match(
+      /^(#{1,3})\s+(.+)$/
+    );
+
+    if (headingMatch) {
+      activeList = null;
+      activeListType = null;
+
+      const level = Math.min(
+        headingMatch[1].length + 1,
+        4
+      );
+      const heading =
+        document.createElement(
+          `h${level}`
+        );
+
+      appendInlineText(
+        heading,
+        headingMatch[2]
+      );
+      container.append(heading);
+      continue;
+    }
+
+    if (/^-{3,}$/.test(line)) {
+      activeList = null;
+      activeListType = null;
+
+      container.append(
+        document.createElement("hr")
+      );
+      continue;
+    }
+
+    const bulletMatch = line.match(
+      /^[-*]\s+(.+)$/
+    );
+    const numberedMatch = line.match(
+      /^\d+[.)]\s+(.+)$/
+    );
+
+    if (bulletMatch || numberedMatch) {
+      const listType = bulletMatch
+        ? "ul"
+        : "ol";
+      const itemText = bulletMatch
+        ? bulletMatch[1]
+        : numberedMatch[1];
+
+      if (
+        !activeList
+        || activeListType !== listType
+      ) {
+        activeList =
+          document.createElement(listType);
+        activeListType = listType;
+        container.append(activeList);
+      }
+
+      const item =
+        document.createElement("li");
+
+      appendInlineText(
+        item,
+        itemText
+      );
+      activeList.append(item);
+      continue;
+    }
+
+    activeList = null;
+    activeListType = null;
+
+    const paragraph =
+      document.createElement("p");
+
+    appendInlineText(paragraph, line);
+    container.append(paragraph);
+  }
+}
+
+
+function createMessageShell(
+  role,
+  isError = false
+) {
+  const article = createElement(
+    "article",
+    [
+      "message",
+      role === "user"
+        ? "user-message"
+        : "assistant-message",
+      isError ? "error-message" : "",
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
+
+  const avatar = createElement(
+    "div",
+    "avatar",
+    role === "user" ? "Y" : "S"
+  );
+
+  const body = createElement(
+    "div",
+    "message-body"
+  );
+
+  const label = createElement(
+    "div",
+    "message-label",
+    role === "user" ? "You" : "StudyOps"
+  );
+
+  const content = createElement(
+    "div",
+    "message-content"
+  );
+
+  body.append(label, content);
+  article.append(avatar, body);
+
+  return {
+    article,
+    body,
+    content,
+  };
+}
+
+
+function appendUserMessage(text) {
+  const shell = createMessageShell("user");
+  const paragraph =
+    document.createElement("p");
+
+  paragraph.textContent = text;
+  shell.content.append(paragraph);
+  messages.append(shell.article);
+  scrollToBottom();
+}
+
+
+function appendLoadingMessage() {
+  const shell =
+    createMessageShell("assistant");
+
+  const dots = createElement(
+    "div",
+    "loading-dots"
+  );
+
+  dots.append(
+    document.createElement("span"),
+    document.createElement("span"),
+    document.createElement("span")
+  );
+
+  shell.content.append(dots);
+  messages.append(shell.article);
+  scrollToBottom();
+
+  return shell.article;
+}
+
+
+function appendErrorMessage(message) {
+  const shell = createMessageShell(
+    "assistant",
+    true
+  );
+
+  const paragraph =
+    document.createElement("p");
+
+  paragraph.textContent = message;
+  shell.content.append(paragraph);
+  messages.append(shell.article);
+  scrollToBottom();
+}
+
+
+function addMetadata(
+  body,
+  response
+) {
+  const metadata = createElement(
+    "div",
+    "message-meta"
+  );
+
+  if (response.generation_model) {
+    metadata.append(
+      createElement(
+        "span",
+        "badge",
+        response.generation_model
+      )
+    );
+  }
+
+  for (
+    const toolCall
+    of response.tool_calls || []
+  ) {
+    metadata.append(
+      createElement(
+        "span",
+        "badge",
+        `Tool · ${toolCall.name}`
+      )
+    );
+  }
+
+  if (metadata.children.length) {
+    body.append(metadata);
+  }
+
+  if (
+    response.tool_calls
+    && response.tool_calls.length
+  ) {
+    const details = createElement(
+      "details",
+      "tool-details"
+    );
+    const summary =
+      document.createElement("summary");
+    const pre =
+      document.createElement("pre");
+
+    summary.textContent =
+      "Inspect tool trace";
+    pre.textContent = JSON.stringify(
+      response.tool_calls,
+      null,
+      2
+    );
+
+    details.append(summary, pre);
+    body.append(details);
+  }
+}
+
+
+function addSources(
+  body,
+  sources
+) {
+  if (!sources || !sources.length) {
+    return;
+  }
+
+  const container = createElement(
+    "div",
+    "sources"
+  );
+
+  for (const source of sources) {
+    const card = createElement(
+      "div",
+      "source-card"
+    );
+
+    const title = createElement(
+      "div",
+      "source-title",
+      `Source ${source.source_number} · ` +
+        (source.filename || "Unknown file")
+    );
+
+    const page =
+      source.page_number ?? "Unknown";
+
+    const similarity =
+      Number(source.similarity).toFixed(3);
+
+    const meta = createElement(
+      "div",
+      "source-meta",
+      `Page ${page} · Similarity ${similarity}`
+    );
+
+    card.append(title, meta);
+    container.append(card);
+  }
+
+  body.append(container);
+}
+
+
+function formatDate(value) {
+  if (!value) {
+    return "Not provided";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString(
+    undefined,
+    {
+      dateStyle: "medium",
+      timeStyle: "medium",
+    }
+  );
+}
+
+
+async function requestJson(
+  url,
+  options
+) {
+  const response = await fetch(
+    url,
+    options
+  );
+
+  let payload;
+
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  if (!response.ok) {
+    const detail =
+      payload && payload.detail
+        ? payload.detail
+        : (
+          `Request failed with status ` +
+          response.status
+        );
+
+    throw new Error(detail);
+  }
+
+  return payload;
+}
+
+
+function addPendingAction(
+  body,
+  action
+) {
+  if (!action) {
+    return;
+  }
+
+  const card = createElement(
+    "section",
+    "action-card"
+  );
+
+  const header = createElement(
+    "div",
+    "action-header"
+  );
+  const heading = createElement(
+    "h3",
+    "",
+    "Calendar proposal"
+  );
+  const actionStatus = createElement(
+    "span",
+    "action-status",
+    action.status
+  );
+
+  header.append(
+    heading,
+    actionStatus
+  );
+
+  const event = action.event || {};
+  const grid =
+    document.createElement("dl");
+
+  grid.className = "action-grid";
+
+  const fields = [
+    [
+      "Event",
+      event.summary || "Untitled",
+    ],
+    [
+      "Starts",
+      formatDate(
+        event.start &&
+          event.start.dateTime
+      ),
+    ],
+    [
+      "Ends",
+      formatDate(
+        event.end &&
+          event.end.dateTime
+      ),
+    ],
+    [
+      "Expires",
+      formatDate(action.expires_at),
+    ],
+  ];
+
+  for (const [label, value] of fields) {
+    grid.append(
+      createElement("dt", "", label),
+      createElement("dd", "", value)
+    );
+  }
+
+  const buttons = createElement(
+    "div",
+    "action-buttons"
+  );
+
+  const confirmButton = createElement(
+    "button",
+    "confirm-button",
+    "Confirm event"
+  );
+  const cancelButton = createElement(
+    "button",
+    "cancel-button",
+    "Cancel"
+  );
+
+  confirmButton.type = "button";
+  cancelButton.type = "button";
+
+  const resultText = createElement(
+    "div",
+    "action-success"
+  );
+
+  function disableActions() {
+    confirmButton.disabled = true;
+    cancelButton.disabled = true;
+  }
+
+  confirmButton.addEventListener(
+    "click",
+    async () => {
+      disableActions();
+      resultText.textContent =
+        "Creating Calendar event…";
+
+      try {
+        const response =
+          await requestJson(
+            `/api/v1/agent/actions/` +
+              `${encodeURIComponent(
+                action.action_id
+              )}/confirm`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
+              body: JSON.stringify({
+                user_id:
+                  userIdInput.value.trim(),
+              }),
+            }
+          );
+
+        actionStatus.textContent =
+          response.status;
+
+        resultText.textContent =
+          response.already_completed
+            ? "Event was already created."
+            : "Calendar event created.";
+
+        const link =
+          response.action
+            .calendar_event_link;
+
+        if (link) {
+          const anchor =
+            document.createElement("a");
+
+          anchor.href = link;
+          anchor.target = "_blank";
+          anchor.rel = "noopener noreferrer";
+          anchor.textContent =
+            " Open in Google Calendar";
+
+          resultText.append(anchor);
+        }
+      } catch (error) {
+        confirmButton.disabled = false;
+        cancelButton.disabled = false;
+        resultText.textContent =
+          error.message;
+      }
+    }
+  );
+
+  cancelButton.addEventListener(
+    "click",
+    async () => {
+      disableActions();
+      resultText.textContent =
+        "Cancelling proposal…";
+
+      try {
+        await requestJson(
+          `/api/v1/agent/actions/` +
+            `${encodeURIComponent(
+              action.action_id
+            )}/cancel`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              user_id:
+                userIdInput.value.trim(),
+            }),
+          }
+        );
+
+        actionStatus.textContent =
+          "cancelled";
+        resultText.textContent =
+          "Proposal cancelled.";
+      } catch (error) {
+        confirmButton.disabled = false;
+        cancelButton.disabled = false;
+        resultText.textContent =
+          error.message;
+      }
+    }
+  );
+
+  buttons.append(
+    confirmButton,
+    cancelButton
+  );
+
+  card.append(
+    header,
+    grid,
+    buttons,
+    resultText
+  );
+
+  body.append(card);
+}
+
+
+function addNotionPublishAction(
+  body,
+  summaryResponse,
+  scope
+) {
+  const card = createElement(
+    "section",
+    "action-card notion-action-card"
+  );
+
+  const header = createElement(
+    "div",
+    "action-header"
+  );
+  const heading = createElement(
+    "h3",
+    "",
+    "Publish summary to Notion"
+  );
+  const actionStatus = createElement(
+    "span",
+    "action-status",
+    "preview"
+  );
+
+  header.append(
+    heading,
+    actionStatus
+  );
+
+  const grid =
+    document.createElement("dl");
+
+  grid.className = "action-grid";
+
+  const fields = [
+    [
+      "Topic",
+      summaryResponse.topic,
+    ],
+    [
+      "Structure",
+      (
+        summaryResponse.section_order
+        || []
+      ).length + " sections",
+    ],
+    [
+      "Preference",
+      `Version ${
+        summaryResponse.preference_version
+      }`,
+    ],
+    [
+      "Destination",
+      "StudyOps Knowledge Base",
+    ],
+  ];
+
+  for (const [label, value] of fields) {
+    grid.append(
+      createElement("dt", "", label),
+      createElement("dd", "", value)
+    );
+  }
+
+  const buttons = createElement(
+    "div",
+    "action-buttons"
+  );
+  const resultText = createElement(
+    "div",
+    "action-success"
+  );
+
+  const prepareButton = createElement(
+    "button",
+    "confirm-button",
+    "Prepare Notion publish"
+  );
+
+  const confirmButton = createElement(
+    "button",
+    "confirm-button",
+    "Confirm publish"
+  );
+
+  const cancelButton = createElement(
+    "button",
+    "cancel-button",
+    "Cancel"
+  );
+
+  prepareButton.type = "button";
+  confirmButton.type = "button";
+  cancelButton.type = "button";
+
+  let preparedAction = null;
+
+  function disablePreparation() {
+    prepareButton.disabled = true;
+  }
+
+  function disableConfirmation() {
+    confirmButton.disabled = true;
+    cancelButton.disabled = true;
+  }
+
+  function enableConfirmation() {
+    confirmButton.disabled = false;
+    cancelButton.disabled = false;
+  }
+
+  prepareButton.addEventListener(
+    "click",
+    async () => {
+      disablePreparation();
+      resultText.textContent =
+        "Preparing confirmation…";
+
+      try {
+        preparedAction = await requestJson(
+          "/api/v1/agent/actions/" +
+            "notion/prepare",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              user_id: scope.userId,
+              course_id: scope.courseId,
+              session_id: scope.sessionId,
+              summary_id:
+                summaryResponse.summary_id,
+            }),
+          }
+        );
+
+        actionStatus.textContent =
+          preparedAction.status;
+
+        resultText.textContent =
+          "Review the summary, then confirm " +
+          "to create the Notion page. " +
+          `This proposal expires ${formatDate(
+            preparedAction.expires_at
+          )}.`;
+
+        buttons.replaceChildren(
+          confirmButton,
+          cancelButton
+        );
+      } catch (error) {
+        prepareButton.disabled = false;
+        resultText.textContent =
+          error.message;
+      }
+    }
+  );
+
+  confirmButton.addEventListener(
+    "click",
+    async () => {
+      if (!preparedAction) {
+        return;
+      }
+
+      disableConfirmation();
+      resultText.textContent =
+        "Publishing summary to Notion…";
+
+      try {
+        const response = await requestJson(
+          `/api/v1/agent/actions/notion/` +
+            `${encodeURIComponent(
+              preparedAction.action_id
+            )}/confirm`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              user_id: scope.userId,
+            }),
+          }
+        );
+
+        actionStatus.textContent =
+          response.status;
+
+        resultText.replaceChildren(
+          document.createTextNode(
+            response.already_completed
+              ? (
+                "This summary was already " +
+                "published."
+              )
+              : "Summary published to Notion."
+          )
+        );
+
+        const pageUrl =
+          response.action.notion_page_url;
+
+        if (pageUrl) {
+          const anchor =
+            document.createElement("a");
+
+          anchor.href = pageUrl;
+          anchor.target = "_blank";
+          anchor.rel = "noopener noreferrer";
+          anchor.textContent =
+            " Open in Notion";
+
+          resultText.append(anchor);
+        }
+      } catch (error) {
+        enableConfirmation();
+        resultText.textContent =
+          error.message;
+      }
+    }
+  );
+
+  cancelButton.addEventListener(
+    "click",
+    async () => {
+      if (!preparedAction) {
+        return;
+      }
+
+      disableConfirmation();
+      resultText.textContent =
+        "Cancelling Notion proposal…";
+
+      try {
+        await requestJson(
+          `/api/v1/agent/actions/notion/` +
+            `${encodeURIComponent(
+              preparedAction.action_id
+            )}/cancel`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              user_id: scope.userId,
+            }),
+          }
+        );
+
+        actionStatus.textContent =
+          "cancelled";
+        resultText.textContent =
+          "Notion publication cancelled.";
+        buttons.replaceChildren();
+      } catch (error) {
+        enableConfirmation();
+        resultText.textContent =
+          error.message;
+      }
+    }
+  );
+
+  buttons.append(prepareButton);
+
+  card.append(
+    header,
+    grid,
+    buttons,
+    resultText
+  );
+
+  body.append(card);
+}
+
+
+function appendAssistantResponse(
+  response
+) {
+  const shell =
+    createMessageShell("assistant");
+
+  renderAnswer(
+    shell.content,
+    response.answer
+  );
+
+  addMetadata(shell.body, response);
+  addSources(
+    shell.body,
+    response.sources
+  );
+  addPendingAction(
+    shell.body,
+    response.pending_action
+  );
+
+  messages.append(shell.article);
+  scrollToBottom();
+}
+
+
+function appendTopicSummaryResponse(
+  response,
+  scope
+) {
+  const shell =
+    createMessageShell("assistant");
+
+  renderAnswer(
+    shell.content,
+    response.summary
+  );
+
+  addMetadata(
+    shell.body,
+    {
+      generation_model:
+        response.generation_model,
+      tool_calls: [
+        {
+          name: "generate_topic_summary",
+          arguments: {
+            topic: response.topic,
+            preference_version:
+              response.preference_version,
+          },
+        },
+      ],
+    }
+  );
+
+  addSources(
+    shell.body,
+    response.sources
+  );
+
+  addNotionPublishAction(
+    shell.body,
+    response,
+    scope
+  );
+
+  shell.body.dataset.summaryId =
+    response.summary_id;
+  shell.body.dataset.summaryTopic =
+    response.topic;
+
+  messages.append(shell.article);
+  scrollToBottom();
+}
+
+
+function resizeComposer() {
+  messageInput.style.height = "auto";
+  messageInput.style.height =
+    `${Math.min(
+      messageInput.scrollHeight,
+      160
+    )}px`;
+}
+
+
+function conversationStorageKey(
+  userId,
+  courseId
+) {
+  return (
+    `studyops-session:${userId}:${courseId}`
+  );
+}
+
+
+function setActiveSessionId(
+  userId,
+  courseId,
+  sessionId
+) {
+  window.localStorage.setItem(
+    conversationStorageKey(
+      userId,
+      courseId
+    ),
+    sessionId
+  );
+}
+
+
+function getOrCreateSessionId(
+  userId,
+  courseId
+) {
+  const storageKey =
+    conversationStorageKey(
+      userId,
+      courseId
+    );
+
+  let sessionId =
+    window.localStorage.getItem(
+      storageKey
+    );
+
+  if (!sessionId) {
+    sessionId =
+      window.crypto.randomUUID();
+
+    window.localStorage.setItem(
+      storageKey,
+      sessionId
+    );
+  }
+
+  return sessionId;
+}
+
+
+function renderWelcomeMessage() {
+  messages.replaceChildren();
+
+  const shell =
+    createMessageShell("assistant");
+
+  renderAnswer(
+    shell.content,
+    "Hello! I can search your course " +
+      "materials, check Canvas deadlines, " +
+      "explain assignments, generate " +
+      "personalized topic summaries, and " +
+      "prepare Calendar or Notion actions " +
+      "for your approval."
+  );
+
+  messages.append(shell.article);
+}
+
+
+function appendStoredAssistantMessage(
+  text
+) {
+  const shell =
+    createMessageShell("assistant");
+
+  renderAnswer(shell.content, text);
+  messages.append(shell.article);
+}
+
+
+async function loadConversation(
+  sessionId
+) {
+  const userId =
+    userIdInput.value.trim();
+  const courseId =
+    courseIdInput.value.trim();
+
+  const query = new URLSearchParams({
+    user_id: userId,
+    course_id: courseId,
+  });
+
+  const history = await requestJson(
+    `/api/v1/agent/conversations/` +
+      `${encodeURIComponent(sessionId)}` +
+      `/messages?${query.toString()}`
+  );
+
+  messages.replaceChildren();
+
+  if (!history.messages.length) {
+    renderWelcomeMessage();
+    return;
+  }
+
+  for (const message of history.messages) {
+    if (message.role === "user") {
+      appendUserMessage(message.content);
+    } else {
+      appendStoredAssistantMessage(
+        message.content
+      );
+    }
+  }
+
+  scrollToBottom();
+}
+
+
+async function refreshConversationSelect() {
+  const userId =
+    userIdInput.value.trim();
+  const courseId =
+    courseIdInput.value.trim();
+
+  if (!userId || !courseId) {
+    conversationSelect.replaceChildren(
+      new Option(
+        "Enter user and course IDs",
+        ""
+      )
+    );
+    conversationSelect.disabled = true;
+    return;
+  }
+
+  conversationSelect.disabled = false;
+
+  const activeSessionId =
+    getOrCreateSessionId(
+      userId,
+      courseId
+    );
+
+  const query = new URLSearchParams({
+    user_id: userId,
+    course_id: courseId,
+    limit: "20",
+  });
+
+  const conversations =
+    await requestJson(
+      `/api/v1/agent/conversations?` +
+        query.toString()
+    );
+
+  conversationSelect.replaceChildren();
+
+  const activeExists =
+    conversations.some(
+      (conversation) =>
+        conversation.session_id
+        === activeSessionId
+    );
+
+  if (!activeExists) {
+    conversationSelect.append(
+      new Option(
+        "New conversation",
+        activeSessionId
+      )
+    );
+  }
+
+  for (const conversation of conversations) {
+    conversationSelect.append(
+      new Option(
+        conversation.title,
+        conversation.session_id
+      )
+    );
+  }
+
+  conversationSelect.value =
+    activeSessionId;
+}
+
+
+async function initializeConversationUi() {
+  const userId =
+    userIdInput.value.trim();
+  const courseId =
+    courseIdInput.value.trim();
+
+  if (!userId || !courseId) {
+    await refreshConversationSelect();
+    renderWelcomeMessage();
+    return;
+  }
+
+  const sessionId =
+    getOrCreateSessionId(
+      userId,
+      courseId
+    );
+
+  await refreshConversationSelect();
+  await loadConversation(sessionId);
+}
+
+
+async function sendMessage(text) {
+  const userId =
+    userIdInput.value.trim();
+  const courseId =
+    courseIdInput.value.trim();
+
+  if (!userId || !courseId) {
+    appendErrorMessage(
+      "Enter both a Canvas user ID " +
+      "and course ID."
+    );
+    return;
+  }
+
+  const sessionId =
+    getOrCreateSessionId(
+      userId,
+      courseId
+    );
+
+  appendUserMessage(text);
+
+  const loading =
+    appendLoadingMessage();
+
+  sendButton.disabled = true;
+  messageInput.disabled = true;
+
+  try {
+    const response = await requestJson(
+      "/api/v1/agent/chat",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type":
+            "application/json",
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          course_id: courseId,
+          session_id: sessionId,
+          message: text,
+          source_limit: 5,
+        }),
+      }
+    );
+
+    loading.remove();
+    appendAssistantResponse(response);
+    await refreshConversationSelect();
+  } catch (error) {
+    loading.remove();
+    appendErrorMessage(error.message);
+  } finally {
+    sendButton.disabled = false;
+    messageInput.disabled = false;
+    messageInput.focus();
+  }
+}
+
+
+async function generateTopicSummary() {
+  const userId =
+    userIdInput.value.trim();
+  const courseId =
+    courseIdInput.value.trim();
+  const topic =
+    summaryTopicInput.value.trim();
+
+  if (!userId || !courseId) {
+    appendErrorMessage(
+      "Enter both a Canvas user ID " +
+        "and course ID."
+    );
+    return;
+  }
+
+  if (!topic) {
+    appendErrorMessage(
+      "Enter a topic to summarize."
+    );
+    summaryTopicInput.focus();
+    return;
+  }
+
+  const sessionId =
+    getOrCreateSessionId(
+      userId,
+      courseId
+    );
+
+  const scope = {
+    userId,
+    courseId,
+    sessionId,
+  };
+
+  appendUserMessage(
+    "Create a personalized summary of: " +
+      topic
+  );
+
+  const loading =
+    appendLoadingMessage();
+
+  generateSummaryButton.disabled = true;
+  summaryTopicInput.disabled = true;
+
+  try {
+    const response = await requestJson(
+      "/api/v1/agent/summaries/prepare",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type":
+            "application/json",
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          course_id: courseId,
+          session_id: sessionId,
+          topic,
+          source_limit: 10,
+        }),
+      }
+    );
+
+    loading.remove();
+
+    appendTopicSummaryResponse(
+      response,
+      scope
+    );
+
+    summaryTopicInput.value = "";
+  } catch (error) {
+    loading.remove();
+    appendErrorMessage(error.message);
+  } finally {
+    generateSummaryButton.disabled = false;
+    summaryTopicInput.disabled = false;
+    summaryTopicInput.focus();
+  }
+}
+
+
+chatForm.addEventListener(
+  "submit",
+  async (event) => {
+    event.preventDefault();
+
+    const text =
+      messageInput.value.trim();
+
+    if (!text) {
+      return;
+    }
+
+    messageInput.value = "";
+    resizeComposer();
+    await sendMessage(text);
+  }
+);
+
+
+messageInput.addEventListener(
+  "input",
+  resizeComposer
+);
+
+
+messageInput.addEventListener(
+  "keydown",
+  (event) => {
+    if (
+      event.key === "Enter"
+      && !event.shiftKey
+    ) {
+      event.preventDefault();
+      chatForm.requestSubmit();
+    }
+  }
+);
+
+
+generateSummaryButton.addEventListener(
+  "click",
+  generateTopicSummary
+);
+
+
+summaryTopicInput.addEventListener(
+  "keydown",
+  async (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      await generateTopicSummary();
+    }
+  }
+);
+
+
+conversationSelect.addEventListener(
+  "change",
+  async () => {
+    const userId =
+      userIdInput.value.trim();
+    const courseId =
+      courseIdInput.value.trim();
+    const sessionId =
+      conversationSelect.value;
+
+    if (
+      !userId
+      || !courseId
+      || !sessionId
+    ) {
+      return;
+    }
+
+    setActiveSessionId(
+      userId,
+      courseId,
+      sessionId
+    );
+
+    try {
+      await loadConversation(sessionId);
+    } catch (error) {
+      appendErrorMessage(error.message);
+    }
+  }
+);
+
+
+newChatButton.addEventListener(
+  "click",
+  async () => {
+    const userId =
+      userIdInput.value.trim();
+    const courseId =
+      courseIdInput.value.trim();
+
+    if (!userId || !courseId) {
+      appendErrorMessage(
+        "Enter both a Canvas user ID " +
+          "and course ID."
+      );
+      return;
+    }
+
+    const sessionId =
+      window.crypto.randomUUID();
+
+    setActiveSessionId(
+      userId,
+      courseId,
+      sessionId
+    );
+
+    renderWelcomeMessage();
+
+    try {
+      await refreshConversationSelect();
+    } catch (error) {
+      appendErrorMessage(error.message);
+    }
+
+    messageInput.focus();
+  }
+);
+
+
+for (
+  const input
+  of [userIdInput, courseIdInput]
+) {
+  input.addEventListener(
+    "change",
+    async () => {
+      try {
+        await initializeConversationUi();
+      } catch (error) {
+        appendErrorMessage(error.message);
+      }
+    }
+  );
+}
+
+
+for (
+  const button
+  of document.querySelectorAll(
+    ".quick-prompt"
+  )
+) {
+  button.addEventListener(
+    "click",
+    () => {
+      messageInput.value =
+        button.dataset.prompt || "";
+      resizeComposer();
+      messageInput.focus();
+    }
+  );
+}
+
+
+initializeConversationUi()
+  .catch((error) => {
+    appendErrorMessage(error.message);
+  });
+
+
+messageInput.focus();

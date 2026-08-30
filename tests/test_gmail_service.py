@@ -81,7 +81,7 @@ def test_bootstrap_processes_messages_and_job_saves_checkpoint(tmp_path: Path) -
 def test_incremental_sync_uses_saved_history(tmp_path: Path) -> None:
     async def run() -> None:
         state_store = JsonGmailSyncStateStore(tmp_path / "state.json")
-        state_store.save_history_id("100")
+        await state_store.save_history_id("100")
         client = FakeGmailClient()
         service = GmailService(client, EmailProcessor())  # type: ignore[arg-type]
         job = GmailSyncJob(
