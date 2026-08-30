@@ -1,13 +1,14 @@
 from contextlib import asynccontextmanager
-
 from pathlib import Path
-
-from fastapi.staticfiles import StaticFiles
 
 import httpx
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from google.cloud import tasks_v2
 
+from app.connectors.calendar import (
+    GoogleCalendarClient,
+)
 from app.connectors.canvas import CanvasClient
 from app.connectors.gmail.client import (
     GmailClient,
@@ -20,17 +21,14 @@ from app.connectors.gmail.oauth import (
 from app.connectors.gmail.service import (
     GmailService,
 )
+from app.connectors.moodle import MoodleClient
 from app.connectors.notion.client import (
     NotionClient,
 )
-from app.connectors.moodle import MoodleClient
 from app.core.config import get_settings
 from app.jobs.gmail_sync import (
+    FirestoreGmailSyncStateStore,
     GmailSyncJob,
-    JsonGmailSyncStateStore,
-)
-from app.repositories.firestore_client import (
-    get_firestore_client,
 )
 from app.repositories.conversation_repository import (
     ConversationRepository,
@@ -38,14 +36,20 @@ from app.repositories.conversation_repository import (
 from app.repositories.episodic_memory_repository import (
     EpisodicMemoryRepository,
 )
-from app.repositories.summary_preference_repository import (
-    SummaryPreferenceRepository,
+from app.repositories.firestore_client import (
+    get_firestore_client,
+)
+from app.repositories.gmail_notification_repository import (
+    GmailNotificationRepository,
+)
+from app.repositories.pending_action_repository import (
+    PendingActionRepository,
 )
 from app.repositories.pending_notion_action_repository import (
     PendingNotionActionRepository,
 )
-from app.routes.ui import (
-    router as ui_router,
+from app.repositories.summary_preference_repository import (
+    SummaryPreferenceRepository,
 )
 from app.routes.agent import (
     router as agent_router,
@@ -71,8 +75,17 @@ from app.routes.mytimes import (
 from app.routes.rag import (
     router as rag_router,
 )
+from app.routes.ui import (
+    router as ui_router,
+)
 from app.services.academic_agent_service import (
     AcademicAgentService,
+)
+from app.services.calendar_action_service import (
+    CalendarActionService,
+)
+from app.services.canvas_reader import (
+    CanvasReadService,
 )
 from app.services.canvas_task_service import (
     CanvasSyncTaskEnqueuer,
@@ -86,25 +99,15 @@ from app.services.rag_answer_service import (
 from app.services.semantic_search_service import (
     SemanticSearchService,
 )
-from app.services.canvas_reader import (
-    CanvasReadService,
-)
 from app.workers.email_processor import (
     EmailProcessor,
 )
 
-from app.connectors.calendar import (
-    GoogleCalendarClient,
-)
-from app.repositories.pending_action_repository import (
-    PendingActionRepository,
-)
-from app.services.calendar_action_service import (
-    CalendarActionService,
-)
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(
+    app: FastAPI,
+):
     """
     Create shared clients once for the lifetime
     of the Cloud Run instance.
@@ -138,6 +141,8 @@ async def lifespan(app: FastAPI):
             settings
             .canvas_request_timeout_seconds
         ),
+        follow_redirects=False,
+        trust_env=settings.http_trust_env,
     )
 
     notion_http_client = httpx.AsyncClient(
@@ -148,7 +153,6 @@ async def lifespan(app: FastAPI):
         follow_redirects=False,
         trust_env=settings.http_trust_env,
     )
-
 
     app.state.moodle_client = MoodleClient(
         http_client=http_client,
@@ -173,6 +177,7 @@ async def lifespan(app: FastAPI):
             else None
         ),
     )
+
     canvas_read_service = CanvasReadService(
         app.state.canvas_client
     )
@@ -180,7 +185,6 @@ async def lifespan(app: FastAPI):
     app.state.canvas_read_service = (
         canvas_read_service
     )
-    
 
     gmail_credential_store = (
         GmailCredentialStore(
@@ -231,6 +235,7 @@ async def lifespan(app: FastAPI):
             gmail_credential_store
         ),
     )
+
     calendar_client = GoogleCalendarClient(
         http_client=gmail_http_client,
         oauth_client=gmail_oauth_client,
@@ -243,9 +248,43 @@ async def lifespan(app: FastAPI):
         calendar_client
     )
 
+    firestore_client = (
+        get_firestore_client()
+    )
+
+    gmail_notification_repository = (
+        GmailNotificationRepository(
+            firestore_client
+        )
+    )
+
+    async def persist_relevant_email(
+        email,
+    ) -> None:
+        relevance = (
+            gmail_notification_repository
+            .classify_email(email)
+        )
+
+        if relevance == "unrelated":
+            return
+
+        await (
+            gmail_notification_repository
+            .persist_email(
+                user_id=(
+                    settings
+                    .gmail_sync_user_id
+                ),
+                email=email,
+            )
+        )
+
     gmail_service = GmailService(
         gmail_client,
-        EmailProcessor(),
+        EmailProcessor(
+            handler=persist_relevant_email
+        ),
     )
 
     app.state.gmail_credential_store = (
@@ -255,10 +294,22 @@ async def lifespan(app: FastAPI):
         gmail_oauth_client
     )
     app.state.gmail_client = gmail_client
+    app.state.gmail_notification_repository = (
+        gmail_notification_repository
+    )
+
     app.state.gmail_sync_job = GmailSyncJob(
         service=gmail_service,
-        state_store=JsonGmailSyncStateStore(
-            settings.gmail_sync_state_path
+        state_store=(
+            FirestoreGmailSyncStateStore(
+                repository=(
+                    gmail_notification_repository
+                ),
+                user_id=(
+                    settings
+                    .gmail_sync_user_id
+                ),
+            )
         ),
         query=settings.gmail_sync_query,
         max_messages=(
@@ -267,24 +318,24 @@ async def lifespan(app: FastAPI):
         ),
     )
 
-    firestore_client = (
-        get_firestore_client()
-    )
     conversation_repository = (
         ConversationRepository(
             firestore_client
         )
     )
+
     episodic_memory_repository = (
         EpisodicMemoryRepository(
             firestore_client
         )
     )
+
     summary_preference_repository = (
         SummaryPreferenceRepository(
             firestore_client
         )
     )
+
     pending_action_repository = (
         PendingActionRepository(
             firestore_client
@@ -467,10 +518,14 @@ async def lifespan(app: FastAPI):
         await academic_agent_service.close()
         await rag_answer_service.close()
         await embedding_service.close()
+
         await http_client.aclose()
         await gmail_http_client.aclose()
         await canvas_http_client.aclose()
         await notion_http_client.aclose()
+
+        firestore_client.close()
+
         await (
             cloud_tasks_client
             .transport
@@ -485,6 +540,7 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
 static_directory = (
     Path(__file__).resolve().parent
     / "static"
@@ -506,4 +562,6 @@ app.include_router(gmail_router)
 app.include_router(mytimes_router)
 app.include_router(rag_router)
 app.include_router(agent_router)
-app.include_router(canvas_scheduler_router)
+app.include_router(
+    canvas_scheduler_router
+)

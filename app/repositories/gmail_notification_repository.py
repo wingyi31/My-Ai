@@ -160,11 +160,8 @@ class GmailNotificationRepository:
             MAX_BODY_LENGTH,
         )
 
-        relevance = self._classify_relevance(
-            subject=subject,
-            from_address=email.from_address,
-            snippet=snippet,
-            text_body=text_body,
+        relevance = self.classify_email(
+            email
         )
 
         attachment_names = [
@@ -475,6 +472,30 @@ class GmailNotificationRepository:
             },
             merge=True,
         )
+
+    @classmethod
+    def classify_email(
+        cls,
+        email: ParsedEmail,
+    ) -> GmailRelevance:
+        return cls._classify_relevance(
+            subject=cls._truncate(
+                email.subject,
+                MAX_SUBJECT_LENGTH,
+            ),
+            from_address=email.from_address,
+            snippet=cls._truncate(
+                email.snippet,
+                MAX_SNIPPET_LENGTH,
+            ),
+            text_body=(
+                cls._optional_truncate(
+                    email.text_body,
+                    MAX_BODY_LENGTH,
+                )
+            ),
+        )
+
 
     @staticmethod
     def _classify_relevance(

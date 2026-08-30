@@ -124,6 +124,16 @@ class Settings(BaseSettings):
         default=30.0,
         gt=0,
     )
+    # The current hackathon deployment supports
+    # one connected Gmail account.
+    gmail_sync_user_id: str = Field(
+        default="126345",
+        min_length=1,
+        max_length=200,
+    )
+    gmail_sync_query: str = (
+        "in:inbox newer_than:30d"
+    )
 
     # Set this for local testing. In production,
     # prefer private Cloud Run + IAM.
