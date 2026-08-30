@@ -99,6 +99,9 @@ from app.services.rag_answer_service import (
 from app.services.semantic_search_service import (
     SemanticSearchService,
 )
+from app.services.gmail_notion_digest_service import (
+    GmailNotionDigestService,
+)
 from app.workers.email_processor import (
     EmailProcessor,
 )
@@ -366,6 +369,52 @@ async def lifespan(
         ),
     )
 
+    gmail_digest_service = (
+        GmailNotionDigestService(
+            project_id=(
+                settings
+                .google_cloud_project
+            ),
+            location=(
+                settings
+                .google_cloud_location
+            ),
+            generation_model=(
+                settings.generation_model
+            ),
+            user_id=(
+                settings.gmail_sync_user_id
+            ),
+            course_id=(
+                settings
+                .gmail_digest_course_id
+            ),
+            notification_repository=(
+                gmail_notification_repository
+            ),
+            notion_client=notion_client,
+            episodic_repository=(
+                episodic_memory_repository
+            ),
+            enabled=(
+                settings
+                .gmail_notion_digest_enabled
+            ),
+            max_messages=(
+                settings
+                .gmail_digest_max_messages
+            ),
+            timezone_name=(
+                settings
+                .gmail_digest_timezone
+            ),
+        )
+    )
+
+    app.state.gmail_digest_service = (
+        gmail_digest_service
+    )
+
     calendar_action_service = (
         CalendarActionService(
             canvas_read_service=(
@@ -516,6 +565,7 @@ async def lifespan(
         yield
     finally:
         await academic_agent_service.close()
+        await gmail_digest_service.close()
         await rag_answer_service.close()
         await embedding_service.close()
 

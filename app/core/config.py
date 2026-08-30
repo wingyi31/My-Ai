@@ -134,6 +134,22 @@ class Settings(BaseSettings):
     gmail_sync_query: str = (
         "in:inbox newer_than:30d"
     )
+    gmail_notion_digest_enabled: bool = (
+        False
+    )
+    gmail_digest_course_id: str = Field(
+        default="96996",
+        min_length=1,
+        max_length=200,
+    )
+    gmail_digest_max_messages: int = Field(
+        default=50,
+        ge=1,
+        le=100,
+    )
+    gmail_digest_timezone: str = (
+        "Asia/Singapore"
+    )
 
     # Set this for local testing. In production,
     # prefer private Cloud Run + IAM.

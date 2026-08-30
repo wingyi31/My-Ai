@@ -5,11 +5,28 @@ from typing import Annotated
 from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 
+from fastapi import (
+    APIRouter,
+    Header,
+    HTTPException,
+    Request,
+    status,
+)
 from app.connectors.gmail.client import GmailApiError
 from app.connectors.gmail.oauth import (
     GmailNotConfiguredError,
     GmailOAuthError,
     InvalidOAuthStateError,
+)
+from app.connectors.notion.client import (
+    NotionApiError,
+    NotionNotConfiguredError,
+)
+from app.repositories.gmail_notification_repository import (
+    GmailNotificationError,
+)
+from app.services.gmail_notion_digest_service import (
+    GmailDigestGenerationError,
 )
 from app.connectors.gmail.service import GmailMessageProcessingError
 from app.jobs.gmail_sync import GmailSyncStateError
@@ -109,27 +126,70 @@ async def gmail_oauth_callback(
 
 @router.post(
     "/internal/scheduler/gmail",
-    summary="Run one Gmail bootstrap or incremental synchronization",
+    summary=(
+        "Synchronize Gmail and publish "
+        "the daily Notion digest"
+    ),
 )
 async def run_gmail_sync(
     request: Request,
-    x_scheduler_secret: Annotated[str | None, Header()] = None,
+    x_scheduler_secret: Annotated[
+        str | None,
+        Header(),
+    ] = None,
 ) -> dict:
-    verify_scheduler_secret(x_scheduler_secret)
+    verify_scheduler_secret(
+        x_scheduler_secret
+    )
+
     try:
-        return await request.app.state.gmail_sync_job.run()
-    except GmailNotConfiguredError as exc:
+        sync_result = await (
+            request.app.state
+            .gmail_sync_job.run()
+        )
+
+        digest_result = await (
+            request.app.state
+            .gmail_digest_service
+            .publish_pending()
+        )
+
+        return {
+            "status": "success",
+            "source": "gmail",
+            "sync": sync_result,
+            "digest": digest_result,
+        }
+    except GmailNotConfiguredError as error:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
-    except (GmailApiError, GmailOAuthError, GmailMessageProcessingError) as exc:
+            status_code=(
+                status
+                .HTTP_503_SERVICE_UNAVAILABLE
+            ),
+            detail=str(error),
+        ) from error
+    except (
+        GmailApiError,
+        GmailOAuthError,
+        GmailMessageProcessingError,
+        NotionApiError,
+        NotionNotConfiguredError,
+        GmailDigestGenerationError,
+    ) as error:
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
-        ) from exc
-    except GmailSyncStateError as exc:
+            status_code=(
+                status.HTTP_502_BAD_GATEWAY
+            ),
+            detail=str(error),
+        ) from error
+    except (
+        GmailSyncStateError,
+        GmailNotificationError,
+    ) as error:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
-        ) from exc
+            status_code=(
+                status
+                .HTTP_500_INTERNAL_SERVER_ERROR
+            ),
+            detail=str(error),
+        ) from error
